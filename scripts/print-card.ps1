@@ -1,0 +1,205 @@
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$ImagePath,
+
+  [string]$PrinterName = "",
+
+  [string]$JobName = "CardifyBooth card",
+
+  [ValidateSet("FitPage", "RollWidth4", "DoubleStrip4x6")]
+  [string]$Mode = "FitPage",
+
+  [double]$RollWidthInches = 4.0,
+
+  [double]$HorizontalOffset = 0.0,
+
+  [double]$VerticalOffset = 0.0
+)
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path -LiteralPath $ImagePath -PathType Leaf)) {
+  throw "Print image not found: $ImagePath"
+}
+
+Add-Type -AssemblyName System.Drawing
+
+$resolvedImagePath = (Resolve-Path -LiteralPath $ImagePath).Path
+$image = $null
+$document = $null
+
+try {
+  $image = [System.Drawing.Image]::FromFile($resolvedImagePath)
+  $document = New-Object System.Drawing.Printing.PrintDocument
+  $document.DocumentName = $JobName
+  $document.OriginAtMargins = $false
+  $document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins 0, 0, 0, 0
+
+  if ($PrinterName.Trim().Length -gt 0) {
+    $selectedPrinter = $PrinterName
+    if ($Mode -eq "DoubleStrip4x6") {
+      $stripPrinterName = "$PrinterName-Strips"
+      if (Get-Printer -Name $stripPrinterName -ErrorAction SilentlyContinue) {
+        Write-Output "Collage mode: Redirecting print job to dedicated strip queue: $stripPrinterName"
+        $selectedPrinter = $stripPrinterName
+      }
+    }
+    $document.PrinterSettings.PrinterName = $selectedPrinter
+  }
+
+  if (-not $document.PrinterSettings.IsValid) {
+    if ($PrinterName.Trim().Length -gt 0) {
+      throw "Printer is not available: $PrinterName"
+    }
+
+    throw "Windows does not have a valid default printer configured."
+  }
+
+  if ($Mode -eq "RollWidth4") {
+    $imageRatio = $image.Width / $image.Height
+    $paperWidthHundredths = [Math]::Max(1, [int][Math]::Round($RollWidthInches * 100))
+    $paperHeightHundredths = [Math]::Max(1, [int][Math]::Round(($RollWidthInches / $imageRatio) * 100))
+    $paperName = "CardifyBooth roll $($RollWidthInches.ToString('0.##'))x$(($RollWidthInches / $imageRatio).ToString('0.##'))"
+
+    $document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize $paperName, $paperWidthHundredths, $paperHeightHundredths
+  } elseif ($Mode -eq "DoubleStrip4x6") {
+    Write-Output "Supported paper sizes for printer '$($document.PrinterSettings.PrinterName)':"
+    $paperSizes = @($document.PrinterSettings.PaperSizes)
+    foreach ($ps in $paperSizes) {
+      Write-Output "  Name: $($ps.PaperName), Width: $($ps.Width), Height: $($ps.Height)"
+    }
+
+    $targetPaperSize = $null
+    $preferences = @("PR (4x6)", "4x6", "4x6 inch", "PR (4x6) x 2", "(6x4)")
+    
+    foreach ($pref in $preferences) {
+      foreach ($ps in $paperSizes) {
+        if ($ps.PaperName -eq $pref) {
+          $targetPaperSize = $ps
+          break
+        }
+      }
+      if ($targetPaperSize -ne $null) { break }
+    }
+
+    # If no exact match by preference name, fallback to approximate dimensions check
+    if ($targetPaperSize -eq $null) {
+      foreach ($ps in $paperSizes) {
+        $w = $ps.Width
+        $h = $ps.Height
+        if ((($w -ge 380 -and $w -le 430) -and ($h -ge 580 -and $h -le 630)) -or 
+            (($w -ge 580 -and $w -le 630) -and ($h -ge 380 -and $h -le 430))) {
+          $targetPaperSize = $ps
+          break
+        }
+      }
+    }
+
+    if ($targetPaperSize -ne $null) {
+      Write-Output "Selected paper size: $($targetPaperSize.PaperName) ($($targetPaperSize.Width)x$($targetPaperSize.Height))"
+      $document.DefaultPageSettings.PaperSize = $targetPaperSize
+      if ($targetPaperSize.Width -gt $targetPaperSize.Height) {
+        Write-Output "Setting Landscape = True"
+        $document.DefaultPageSettings.Landscape = $true
+      } else {
+        Write-Output "Setting Landscape = False"
+        $document.DefaultPageSettings.Landscape = $false
+      }
+    } else {
+      Write-Output "No native 4x6 paper size found. Falling back to custom paper size."
+      $document.DefaultPageSettings.Landscape = $false
+      $document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize "CardifyBooth Fallback 4x6", 400, 600
+    }
+  }
+
+  $document.add_PrintPage({
+    param($sender, $eventArgs)
+
+    if ($Mode -eq "RollWidth4") {
+      $bounds = $eventArgs.PageBounds
+      $eventArgs.Graphics.DrawImage($image, $bounds)
+    } elseif ($Mode -eq "DoubleStrip4x6") {
+      $bounds = $eventArgs.PageBounds
+      $isLandscape = $eventArgs.PageSettings.Landscape -or ($bounds.Width -gt $bounds.Height)
+
+      if ($isLandscape) {
+        # Landscape 6x4: Top half and bottom half strips
+        $halfHeight = $bounds.Height / 2
+        
+        $rotatedImage = $image.Clone()
+        $rotatedImage.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone)
+
+        try {
+          $topTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $bounds.Width, $halfHeight
+          $bottomTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $halfHeight + $VerticalOffset), $bounds.Width, $halfHeight
+
+          # Fit rotated image in top target
+          $scale1 = [Math]::Min($topTarget.Width / $rotatedImage.Width, $topTarget.Height / $rotatedImage.Height)
+          $w1 = $rotatedImage.Width * $scale1
+          $h1 = $rotatedImage.Height * $scale1
+          $x1 = $topTarget.X + (($topTarget.Width - $w1) / 2)
+          $y1 = $topTarget.Y + (($topTarget.Height - $h1) / 2)
+          $eventArgs.Graphics.DrawImage($rotatedImage, $x1, $y1, $w1, $h1)
+
+          # Fit rotated image in bottom target
+          $scale2 = [Math]::Min($bottomTarget.Width / $rotatedImage.Width, $bottomTarget.Height / $rotatedImage.Height)
+          $w2 = $rotatedImage.Width * $scale2
+          $h2 = $rotatedImage.Height * $scale2
+          $x2 = $bottomTarget.X + (($bottomTarget.Width - $w2) / 2)
+          $y2 = $bottomTarget.Y + (($bottomTarget.Height - $h2) / 2)
+          $eventArgs.Graphics.DrawImage($rotatedImage, $x2, $y2, $w2, $h2)
+        } finally {
+          $rotatedImage.Dispose()
+        }
+      } else {
+        # Portrait 4x6: Left half and right half strips
+        $halfWidth = $bounds.Width / 2
+        
+        $leftTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
+        $rightTarget = New-Object System.Drawing.RectangleF ($bounds.X + $halfWidth + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
+
+        # Fit image in left target
+        $scale1 = [Math]::Min($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
+        $w1 = $image.Width * $scale1
+        $h1 = $image.Height * $scale1
+        $x1 = $leftTarget.X + (($leftTarget.Width - $w1) / 2)
+        $y1 = $leftTarget.Y + (($leftTarget.Height - $h1) / 2)
+        $eventArgs.Graphics.DrawImage($image, $x1, $y1, $w1, $h1)
+
+        # Fit image in right target
+        $scale2 = [Math]::Min($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
+        $w2 = $image.Width * $scale2
+        $h2 = $image.Height * $scale2
+        $x2 = $rightTarget.X + (($rightTarget.Width - $w2) / 2)
+        $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
+        $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
+      }
+    } else {
+      $bounds = $eventArgs.PageSettings.PrintableArea
+      if ($bounds.Width -le 0 -or $bounds.Height -le 0) {
+        $bounds = $eventArgs.PageBounds
+      }
+
+      $scale = [Math]::Min($bounds.Width / $image.Width, $bounds.Height / $image.Height)
+      $width = $image.Width * $scale
+      $height = $image.Height * $scale
+      $x = $bounds.X + (($bounds.Width - $width) / 2)
+      $y = $bounds.Y + (($bounds.Height - $height) / 2)
+      $target = New-Object System.Drawing.RectangleF $x, $y, $width, $height
+
+      $eventArgs.Graphics.DrawImage($image, $target)
+    }
+
+    $eventArgs.HasMorePages = $false
+  })
+
+  $document.Print()
+} finally {
+  if ($document -ne $null) {
+    $document.Dispose()
+  }
+
+  if ($image -ne $null) {
+    $image.Dispose()
+  }
+}

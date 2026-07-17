@@ -1,0 +1,55 @@
+import { NextRequest, NextResponse } from "next/server";
+
+type MirrorRole = "kiosk" | "mirror";
+type MirrorEvent = {
+  id: number;
+  target: MirrorRole;
+  type: string;
+  [key: string]: unknown;
+};
+
+type MirrorRelay = {
+  nextId: number;
+  events: MirrorEvent[];
+};
+
+const globalRelay = globalThis as typeof globalThis & {
+  cardifyMirrorRelay?: MirrorRelay;
+};
+
+const relay = globalRelay.cardifyMirrorRelay ?? { nextId: 1, events: [] };
+globalRelay.cardifyMirrorRelay = relay;
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  const role = request.nextUrl.searchParams.get("role") as MirrorRole | null;
+  const since = Number(request.nextUrl.searchParams.get("since") ?? 0);
+
+  if (role !== "kiosk" && role !== "mirror") {
+    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
+  }
+
+  const events = relay.events.filter((event) => event.target === role && event.id > since);
+  return NextResponse.json({ events }, { headers: { "Cache-Control": "no-store" } });
+}
+
+export async function POST(request: NextRequest) {
+  const body = (await request.json()) as Record<string, unknown>;
+  const target = body.target as MirrorRole | undefined;
+  const type = typeof body.type === "string" ? body.type : "";
+
+  if ((target !== "kiosk" && target !== "mirror") || !type) {
+    return NextResponse.json({ error: "Invalid event" }, { status: 400 });
+  }
+
+  if (type === "captured-photo") {
+    relay.events = relay.events.filter((event) => event.type !== "captured-photo");
+  }
+
+  const event: MirrorEvent = { ...body, id: relay.nextId++, target, type };
+  relay.events.push(event);
+  relay.events = relay.events.slice(-40);
+
+  return NextResponse.json({ id: event.id });
+}

@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retro Photobooth Studio</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  </head>
+  <body
+    class="min-h-screen flex items-center justify-center font-sans antialiased text-gray-800 selection:bg-pink-200"
+  >
+    <div
+      id="page-home"
+      class="view-panel max-w-xl text-center p-8 bg-white/90 backdrop-blur rounded-3xl shadow-2xl border-4 border-pink-400 transform transition duration-500 hover:scale-[1.01]"
+    >
+      <div class="text-6xl my-4">📸✨</div>
+      <h1
+        class="text-5xl font-black tracking-tight text-pink-600 mb-2 drop-shadow-sm"
+      >
+        FLASHBACK
+      </h1>
+      <p class="text-xl font-bold text-gray-500 uppercase tracking-widest mb-8">
+        Your Virtual Photobooth
+      </p>
+      <p class="text-gray-600 mb-8 px-6 text-lg">
+        Snap picture strips, decorate with cute custom frames, drop interactive
+        stickers, and instantly share memories with friends!
+      </p>
+      <button
+        id="btn-start"
+        class="px-10 py-5 bg-gradient-to-r from-pink-500 to-rose-500 text-white font-extrabold text-2xl rounded-full shadow-lg shadow-pink-500/30 hover:from-pink-600 hover:to-rose-600 hover:shadow-xl transition-all duration-200 transform active:scale-95 cursor-pointer"
+      >
+        START BOOTH ⚡
+      </button>
+    </div>
+
+    <div
+      id="page-layout"
+      class="view-panel hidden max-w-3xl w-full mx-4 p-8 bg-white/90 backdrop-blur rounded-3xl shadow-2xl border-4 border-pink-400 relative"
+    >
+      <button class="back-btn-nav" data-target="home">← Back</button>
+      <h2 class="text-3xl font-black text-center text-gray-800 mb-2 mt-4">
+        CHOOSE YOUR LAYOUT
+      </h2>
+      <p class="text-center text-gray-500 font-medium mb-10">
+        How many memories do you want to secure today?
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-2xl mx-auto">
+        <div
+          data-slots="2"
+          class="layout-card group bg-white border-4 border-gray-200 hover:border-pink-400 rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-xl flex flex-col items-center"
+        >
+          <div
+            class="w-16 h-36 border-2 border-dashed border-gray-400 rounded group-hover:border-pink-300 flex flex-col justify-around p-2 bg-gray-50 mb-4"
+          >
+            <div class="w-full h-12 bg-gray-200 rounded"></div>
+            <div class="w-full h-12 bg-gray-200 rounded"></div>
+          </div>
+          <span
+            class="text-xl font-black text-gray-700 group-hover:text-pink-600"
+            >Duo Strip</span
+          >
+          <span class="text-xs text-gray-400 mt-1">2 Captured Photos</span>
+        </div>
+        <div
+          data-slots="3"
+          class="layout-card group bg-white border-4 border-gray-200 hover:border-pink-400 rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-xl flex flex-col items-center"
+        >
+          <div
+            class="w-16 h-36 border-2 border-dashed border-gray-400 rounded group-hover:border-pink-300 flex flex-col justify-around p-2 bg-gray-50 mb-4"
+          >
+            <div class="w-full h-9 bg-gray-200 rounded"></div>
+            <div class="w-full h-9 bg-gray-200 rounded"></div>
+            <div class="w-full h-9 bg-gray-200 rounded"></div>
+          </div>
+          <span
+            class="text-xl font-black text-gray-700 group-hover:text-pink-600"
+            >Trio Strip</span
+          >
+          <span class="text-xs text-gray-400 mt-1">3 Captured Photos</span>
+        </div>
+        <div
+          data-slots="4"
+          class="layout-card group bg-white border-4 border-gray-200 hover:border-pink-400 rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-xl flex flex-col items-center"
+        >
+          <div
+            class="w-16 h-36 border-2 border-dashed border-gray-400 rounded group-hover:border-pink-300 flex flex-col justify-around p-2 bg-gray-50 mb-4"
+          >
+            <div class="w-full h-7 bg-gray-200 rounded"></div>
+            <div class="w-full h-7 bg-gray-200 rounded"></div>
+            <div class="w-full h-7 bg-gray-200 rounded"></div>
+            <div class="w-full h-7 bg-gray-200 rounded"></div>
+          </div>
+          <span
+            class="text-xl font-black text-gray-700 group-hover:text-pink-600"
+            >Classic 4-Pack</span
+          >
+          <span class="text-xs text-gray-400 mt-1">4 Captured Photos</span>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="page-camera"
+      class="view-panel hidden max-w-4xl w-full mx-4 p-8 bg-white/90 backdrop-blur rounded-3xl shadow-2xl border-4 border-pink-400 relative"
+    >
+      <button class="back-btn-nav" data-target="layout">← Back</button>
+      <h2
+        class="text-3xl font-black text-center text-gray-800 mb-6 uppercase tracking-tight mt-4"
+      >
+        Smile for the Camera!
+      </h2>
+
+      <div
+        class="grid grid-cols-1 md:grid-cols-12 gap-8 items-start justify-center"
+      >
+        <div
+          class="md:col-span-4 bg-gray-50 border border-gray-200 p-4 rounded-2xl flex flex-col items-center w-full"
+        >
+          <p
+            class="text-xs font-black text-gray-400 uppercase tracking-wider mb-3"
+          >
+            Live Strip Preview
+          </p>
+          <div
+            id="camera-slots-preview"
+            class="flex flex-col gap-3 w-full max-w-[150px] bg-white p-3 rounded-xl shadow-inner border border-gray-200"
+          ></div>
+        </div>
+
+        <div class="md:col-span-8 flex flex-col items-center gap-6 w-full">
+          <div
+            class="relative bg-black rounded-2xl overflow-hidden shadow-inner border-4 border-gray-800 w-full max-w-[420px] aspect-[4/3]"
+          >
+            <video
+              id="video"
+              autoplay
+              playsinline
+              class="w-full h-full object-cover scale-x-[-1]"
+            ></video>
+            <div
+              id="countdown"
+              class="absolute inset-0 bg-pink-500/40 backdrop-blur-sm hidden flex items-center justify-center text-white text-7xl font-black drop-shadow-md"
+            >
+              3
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-3 w-full max-w-[420px]">
+            <button
+              id="btn-snap"
+              class="w-full py-4 bg-emerald-500 text-white font-bold text-xl rounded-xl shadow-md hover:bg-emerald-600 transition duration-200 cursor-pointer"
+            >
+              📸 TAKE PICTURE
+            </button>
+            <button
+              id="btn-retake"
+              class="w-full py-2 bg-rose-100 text-rose-600 font-bold text-sm rounded-xl hover:bg-rose-200 transition duration-200 hidden cursor-pointer"
+            >
+              🔄 Retake All Photos
+            </button>
+            <button
+              id="btn-to-decor"
+              class="w-full py-4 bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-lg rounded-xl shadow-md hover:opacity-90 transition duration-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              disabled
+            >
+              Next Step: Decorate ✨
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="page-decor"
+      class="view-panel hidden max-w-5xl w-full mx-4 p-8 bg-white/90 backdrop-blur rounded-3xl shadow-2xl border-4 border-pink-400 relative"
+    >
+      <button class="back-btn-nav" data-target="camera">← Back</button>
+      <h2 class="text-3xl font-black text-center text-gray-800 mb-6 mt-4">
+        🎨 DECORATION STUDIO
+      </h2>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div
+          class="lg:col-span-4 bg-gray-50 border border-gray-200 p-5 rounded-2xl h-full space-y-6"
+        >
+          <div>
+            <label
+              class="block text-sm font-black text-gray-700 uppercase tracking-wider mb-2"
+              >Strip Background Color</label
+            >
+            <div class="flex gap-2 items-center">
+              <input
+                type="color"
+                id="strip-color-picker"
+                value="#ffffff"
+                class="w-12 h-12 bg-transparent border-0 cursor-pointer rounded-lg"
+              />
+              <span class="text-sm text-gray-500 font-mono" id="lbl-color"
+                >#FFFFFF</span
+              >
+            </div>
+          </div>
+
+          <div>
+            <label
+              class="block text-sm font-black text-gray-700 uppercase tracking-wider mb-2"
+              >Preset Patterns</label
+            >
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                data-preset="none"
+                class="preset-btn py-2 border-2 border-pink-500 bg-pink-50 text-pink-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Plain Clean
+              </button>
+              <button
+                data-preset="retro"
+                class="preset-btn py-2 border border-gray-300 hover:border-pink-400 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Retro Hearts
+              </button>
+              <button
+                data-preset="stars"
+                class="preset-btn py-2 border border-gray-300 hover:border-pink-400 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Neon Stars
+              </button>
+              <button
+                data-preset="grid"
+                class="preset-btn py-2 border border-gray-300 hover:border-pink-400 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Minimal Grid
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label
+              class="block text-sm font-black text-gray-700 uppercase tracking-wider mb-1"
+              >Strip Watermark</label
+            >
+            <p class="text-xs text-gray-400">
+              The bottom signature is automatically locked to your custom brand
+              preset.
+            </p>
+          </div>
+
+          <div class="filter-panel">
+            <label
+              class="block text-sm font-black uppercase tracking-wider mb-2"
+            >
+              Camcorder Filters
+            </label>
+
+            <div class="filter-panel">
+              <label
+                class="block text-sm font-black uppercase tracking-wider mb-2 text-gray-700"
+              >
+                Camcorder Filters
+              </label>
+              <div class="filter-grid grid grid-cols-2 gap-2">
+                <button
+                  class="filter-btn active py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="none"
+                >
+                  ORIGINAL
+                </button>
+                <button
+                  class="filter-btn py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="vhs"
+                >
+                  VHS
+                </button>
+                <button
+                  class="filter-btn py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="blue"
+                >
+                  Y2K BLUE
+                </button>
+                <button
+                  class="filter-btn py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="bw"
+                >
+                  B&W
+                </button>
+                <button
+                  class="filter-btn py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="warm"
+                >
+                  FILM
+                </button>
+                <button
+                  class="filter-btn py-2 bg-blue-600 rounded-xl font-bold text-xs text-white border"
+                  data-filter="pink"
+                >
+                  PINK GLOW
+                </button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label
+              class="block text-sm font-black text-gray-700 uppercase tracking-wider mb-1"
+              >Click to drop Stickers</label
+            >
+            <p class="text-xs text-gray-400 mb-3">
+              Click to add onto photo strip, then hold and drag on the right
+              workspace canvas to re-position!
+            </p>
+            <div
+              class="flex flex-wrap gap-3 p-3 bg-white border border-gray-200 rounded-xl max-h-[160px] overflow-y-auto"
+            >
+              <span
+                data-sticker="❤️"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >❤️</span
+              >
+              <span
+                data-sticker="⭐"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >⭐</span
+              >
+              <span
+                data-sticker="✨"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >✨</span
+              >
+              <span
+                data-sticker="🎀"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >🎀</span
+              >
+              <span
+                data-sticker="🕶️"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >🕶️</span
+              >
+              <span
+                data-sticker="👑"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >👑</span
+              >
+              <span
+                data-sticker="🐈"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >🐈</span
+              >
+              <span
+                data-sticker="🍕"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >🍕</span
+              >
+              <span
+                data-sticker="🎉"
+                class="sticker-item text-3xl cursor-pointer hover:scale-125 transition"
+                >🎉</span
+              >
+            </div>
+          </div>
+
+          <button
+            id="btn-to-download"
+            class="w-full py-4 bg-pink-500 text-white font-extrabold text-lg rounded-xl shadow-md hover:bg-pink-600 transition duration-200 cursor-pointer"
+          >
+            PROCEED TO EXPORT →
+          </button>
+        </div>
+
+        <div
+          class="lg:col-span-8 flex justify-center items-center p-4 bg-gray-200 rounded-2xl shadow-inner border border-gray-300 overflow-x-auto"
+        >
+          <canvas
+            id="decor-canvas"
+            class="max-w-full h-auto rounded shadow-lg border border-gray-400 bg-white cursor-move"
+          ></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="page-download"
+      class="view-panel hidden max-w-2xl w-full mx-4 p-8 bg-white/90 backdrop-blur rounded-3xl shadow-2xl border-4 border-pink-400 text-center"
+    >
+      <h2 class="text-4xl font-black text-pink-600 mb-2">MEMORIES SAVED! 🎉</h2>
+      <p class="text-gray-500 font-medium mb-8">
+        Choose how you'd like to output your customized strip
+      </p>
+
+      <div
+        class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 items-center justify-center"
+      >
+        <div
+          class="bg-gray-50 p-6 rounded-2xl border border-gray-200 flex flex-col items-center"
+        >
+          <div class="text-4xl mb-3">💾</div>
+          <h3 class="font-bold text-lg mb-2">Save Image</h3>
+          <p class="text-xs text-gray-400 mb-4">
+            Download a clean high-res PNG directly to your system files.
+          </p>
+          <a
+            id="download-link"
+            download="my-photobooth-strip.png"
+            class="px-4 py-2 bg-pink-500 text-white text-sm font-bold rounded-lg shadow hover:bg-pink-600 transition w-full text-center block cursor-pointer"
+          >
+            Download PNG
+          </a>
+        </div>
+
+        <div
+          class="bg-gray-50 p-6 rounded-2xl border border-gray-200 flex flex-col items-center"
+        >
+          <div class="text-4xl mb-3">🖨️</div>
+          <h3 class="font-bold text-lg mb-2">Print Strip</h3>
+          <p class="text-xs text-gray-400 mb-4">
+            Triggers system local printer dialogue to layout onto paper formats.
+          </p>
+          <button
+            id="btn-print"
+            class="px-4 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg shadow hover:bg-gray-900 transition w-full cursor-pointer"
+          >
+            Print Now
+          </button>
+        </div>
+
+        <div
+          class="bg-gray-50 p-6 rounded-2xl border border-gray-200 flex flex-col items-center"
+        >
+          <div class="text-4xl mb-3">📲</div>
+          <h3 class="font-bold text-lg mb-2">Mobile QR Code</h3>
+          <p class="text-xs text-gray-400 mb-4">
+            Scan code to open simulated cloud download instantly on phone.
+          </p>
+          <button
+            id="btn-qr"
+            class="px-4 py-2 bg-teal-500 text-white text-sm font-bold rounded-lg shadow hover:bg-teal-600 transition w-full cursor-pointer"
+          >
+            Generate QR
+          </button>
+        </div>
+      </div>
+
+      <div
+        id="qr-container"
+        class="hidden flex flex-col items-center justify-center border-t border-gray-200 pt-6 animate-fade-in"
+      >
+        <p class="text-sm font-bold text-gray-600 mb-3">
+          📱 Scan this QR Code with your Smartphone Camera:
+        </p>
+        <div
+          id="qrcode"
+          class="p-3 bg-white border-2 border-pink-400 rounded-xl shadow-md inline-block"
+        ></div>
+      </div>
+
+      <button
+        id="btn-restart"
+        class="mt-8 px-6 py-2 text-sm font-bold bg-gray-200 text-gray-600 hover:bg-gray-300 rounded-full transition cursor-pointer"
+      >
+        ← Take Another Strip
+      </button>
+    </div>
+
+    <script src="script.js" defer></script>
+  </body>
+</html>

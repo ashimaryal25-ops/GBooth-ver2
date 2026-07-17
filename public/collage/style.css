@@ -1,0 +1,467 @@
+/* =========================
+   Y2K CAMCORDER THEME
+========================= */
+
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800&family=VT323&display=swap");
+
+:root {
+  --y2k-blue: #5c7cff;
+  --y2k-dark: #0c1028;
+  --y2k-panel: #141938;
+  --y2k-purple: #7a5cff;
+  --y2k-pink: #ff5cd6;
+  --y2k-glow: #7aa2ff;
+  --y2k-text: #edf2ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "VT323", monospace;
+  overflow-x: hidden;
+  color: white;
+
+  background:
+    radial-gradient(circle at top left, #283d96 0%, transparent 25%),
+    radial-gradient(circle at bottom right, #ff5cd620 0%, transparent 25%),
+    linear-gradient(to bottom, #050816, #0b1028, #11183a);
+
+  min-height: 100vh;
+  position: relative;
+}
+
+/* VHS Scanlines */
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* PANELS */
+
+.view-panel {
+  background: linear-gradient(
+    to bottom,
+    rgba(20, 25, 56, 0.96),
+    rgba(11, 16, 40, 0.98)
+  );
+
+  border-radius: 30px;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  box-shadow:
+    0 0 40px rgba(92, 124, 255, 0.25),
+    inset 0 0 20px rgba(255, 255, 255, 0.05);
+
+  color: white;
+
+  position: relative;
+  overflow: hidden;
+}
+
+/* chrome top shine */
+
+.view-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.12),
+    transparent
+  );
+
+  pointer-events: none;
+}
+
+/* BUTTONS */
+
+button,
+.layout-card,
+.filter-btn,
+.preset-btn {
+  transition: 0.25s ease;
+}
+
+button:hover,
+.layout-card:hover,
+.filter-btn:hover,
+.preset-btn:hover {
+  transform: translateY(-2px) scale(1.02);
+}
+
+/* HOME */
+
+#page-home {
+  text-align: center;
+}
+
+#page-home h1 {
+  font-family: "Orbitron", sans-serif;
+
+  background: linear-gradient(to bottom, white, #8eb6ff, #5c7cff);
+
+  -webkit-backgroundclip: text;
+  -webkit-text-fill-color: transparent;
+
+  text-shadow:
+    0 0 10px #7aa2ff,
+    0 0 20px #7aa2ff;
+
+  letter-spacing: 4px;
+}
+
+#btn-start {
+  background: linear-gradient(to bottom, #5c7cff, #3049b9);
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+
+  box-shadow:
+    0 0 20px rgba(92, 124, 255, 0.45),
+    inset 0 0 10px rgba(255, 255, 255, 0.2);
+
+  font-family: "Orbitron", sans-serif;
+}
+
+/* BACK BUTTON */
+
+.back-btn-nav {
+  background: rgba(255, 255, 255, 0.08);
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  color: white;
+
+  backdrop-filter: blur(10px);
+}
+
+.back-btn-nav:hover {
+  background: #5c7cff;
+}
+
+/* LAYOUT CARDS */
+
+.layout-card {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  backdrop-filter: blur(14px);
+
+  box-shadow: inset 0 0 15px rgba(255, 255, 255, 0.05);
+}
+
+.layout-card:hover {
+  border-color: #7aa2ff;
+
+  box-shadow:
+    0 0 25px rgba(122, 162, 255, 0.4),
+    inset 0 0 15px rgba(255, 255, 255, 0.08);
+}
+
+/* CAMERA SCREEN */
+
+#page-camera video {
+  filter: contrast(1.05) saturate(1.15);
+
+  border-radius: 24px;
+}
+
+#page-camera .relative {
+  border: 2px solid rgba(255, 255, 255, 0.12);
+
+  box-shadow: 0 0 25px rgba(92, 124, 255, 0.35);
+}
+
+/* REC LABEL */
+
+#page-camera .relative::before {
+  content: "● REC";
+  position: absolute;
+  top: 12px;
+  left: 14px;
+
+  color: #ff4f6d;
+
+  font-size: 24px;
+  z-index: 50;
+
+  font-family: "Orbitron", sans-serif;
+
+  text-shadow: 0 0 10px red;
+}
+
+/* PLAY ICON */
+
+#page-camera .relative::after {
+  content: "PLAY ▶";
+  position: absolute;
+  top: 12px;
+  right: 14px;
+
+  font-size: 20px;
+
+  color: white;
+
+  z-index: 50;
+
+  opacity: 0.8;
+
+  font-family: "Orbitron", sans-serif;
+}
+
+/* COUNTDOWN (FIXED: Stripped blur filters so camera stream stays crystal clear) */
+#countdown {
+  font-family: "Orbitron", sans-serif !important;
+  background: transparent !important; /* Removes the dark tint entirely */
+  backdrop-filter: none !important; /* Completely disables any browser blur leakage */
+  -webkit-backdrop-filter: none !important;
+  text-shadow:
+    0 0 15px rgba(0, 0, 0, 0.8),
+    0 0 30px #7aa2ff !important; /* High contrast glowing text edge */
+}
+
+/* CAMERA BUTTONS */
+
+#btn-snap,
+#btn-to-decor {
+  background: linear-gradient(to bottom, #5c7cff, #3247a8) !important;
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+
+  box-shadow:
+    0 0 20px rgba(92, 124, 255, 0.4),
+    inset 0 0 10px rgba(255, 255, 255, 0.15);
+
+  font-family: "Orbitron", sans-serif;
+}
+
+#btn-retake {
+  background: linear-gradient(to bottom, #ff5c8a, #c43765) !important;
+
+  color: white !important;
+}
+
+/* SIDE PREVIEW */
+
+#camera-slots-preview {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  ) !important;
+
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-preview-thumbnail {
+  width: 100%;
+  aspect-ratio: 4/3;
+
+  border-radius: 12px;
+
+  overflow: hidden;
+
+  background: #0f1229;
+
+  border: 2px solid rgba(255, 255, 255, 0.08);
+
+  box-shadow:
+    inset 0 0 12px rgba(255, 255, 255, 0.08),
+    0 0 10px rgba(67, 97, 255, 0.25);
+
+  position: relative;
+}
+
+.sidebar-preview-thumbnail::before {
+  content: "EMPTY";
+  position: absolute;
+  inset: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  color: rgba(255, 255, 255, 0.25);
+
+  font-family: "Orbitron", sans-serif;
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+
+.sidebar-preview-thumbnail.filled {
+  border-color: #7aa2ff;
+
+  box-shadow:
+    0 0 18px #7aa2ff,
+    inset 0 0 12px rgba(255, 255, 255, 0.15);
+}
+
+.sidebar-preview-thumbnail.filled::before {
+  display: none;
+}
+
+/* DECOR PANEL */
+
+#page-decor .lg\:col-span-4 {
+  background: linear-gradient(
+    to bottom,
+    rgba(42, 54, 130, 0.96),
+    rgba(22, 28, 68, 0.96)
+  ) !important;
+
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  box-shadow: 0 0 30px rgba(73, 103, 255, 0.25);
+
+  color: white;
+}
+
+/* LABELS */
+
+#page-decor label,
+#page-decor h2,
+#page-camera h2,
+#page-layout h2 {
+  color: white !important;
+
+  font-family: "Orbitron", sans-serif;
+}
+
+#page-decor p,
+#page-layout p {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* FILTER PANEL */
+
+.filter-panel {
+  margin-top: 20px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.filter-btn {
+  background: linear-gradient(to bottom, #4967ff, #283d96);
+
+  border: 1px solid rgba(255, 255, 255, 0.15);
+
+  color: white;
+
+  padding: 14px;
+
+  border-radius: 14px;
+
+  font-family: "Orbitron", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+
+  letter-spacing: 1px;
+
+  box-shadow:
+    0 0 12px rgba(73, 103, 255, 0.4),
+    inset 0 0 10px rgba(255, 255, 255, 0.15);
+}
+
+.filter-btn.active {
+  border-color: #9bb6ff;
+
+  box-shadow: 0 0 25px #7aa2ff;
+}
+
+/* STICKERS */
+
+.sticker-item {
+  background: rgba(255, 255, 255, 0.08);
+
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  padding: 10px;
+
+  border-radius: 14px;
+
+  backdrop-filter: blur(8px);
+
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.1);
+
+  transition: 0.2s;
+}
+
+.sticker-item:hover {
+  transform: scale(1.15) rotate(-6deg);
+
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.25);
+}
+
+/* CANVAS */
+
+#decor-canvas {
+  background: white;
+
+  box-shadow: 0 0 35px rgba(0, 0, 0, 0.4);
+}
+
+/* DOWNLOAD SCREEN */
+
+#page-download .bg-gray-50 {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  ) !important;
+
+  border: 1px solid rgba(255, 255, 255, 0.1);
+
+  color: white;
+}
+
+#page-download p {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* QR */
+
+#qrcode {
+  background: white;
+}
+
+/* SCROLLBAR */
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #5c7cff;
+  border-radius: 999px;
+}

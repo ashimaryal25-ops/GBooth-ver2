@@ -1,6 +1,11 @@
 const canvas = document.getElementById("gameCanvas");
 let gameOver = false;
 let leaderBoard = [];
+// Fetch leaderboard on load
+fetch('/api/leaderboard')
+  .then(res => res.json())
+  .then(data => { if(Array.isArray(data)) leaderBoard = data; });
+
 let enteringName = false;
 let showingLeaderBoard = false;
 let leaderboardAnimationProgress = 0;
@@ -10,7 +15,7 @@ let pulseValue = 0;
 const ctx = canvas.getContext("2d");
 
 // ground line position
-const groundY = canvas.height - 150;
+let groundY = canvas.height - 150;
 
 // target display size for the ghost (logical hitbox size)
 const GHOST_W = 120;
@@ -155,14 +160,32 @@ function spawnObstacle() {
   });
 }
 
-function jump(force) {
+function autoJump() {
+  if (ghost.jumping) return;
+  // Find closest upcoming obstacle
+  const upcoming = obstacles.find(o => o.x + o.width > ghost.x);
+  if (upcoming) {
+    // Jump slightly before it
+    if (upcoming.x - (ghost.x + ghost.width) < 180) {
+      jump(jumpForce, true);
+    }
+  }
+}
+
+function jump(force, isAuto = false) {
   const f = force || jumpForce;
-  if (showingLeaderBoard) { showingLeaderBoard = false; resetGame(); return; }
+  if (showingLeaderBoard) { if(!isAuto){ showingLeaderBoard = false; resetGame(); } return; }
   if (enteringName) return;
-  if (!gameStarted) { gameStarted = true; bgVideo.pause(); gameBgVideo.play(); return; }
+  if (!gameStarted) { 
+    if(!isAuto) {
+      gameStarted = true; resetGame(); return; 
+    }
+  }
   if (gameOver) {
-    if (checkTopFive()) { enteringName = true; }
-    else { showingLeaderBoard = true; leaderboardAnimationProgress = 0; }
+    if(!isAuto) {
+      if (checkTopFive()) { enteringName = true; }
+      else { showingLeaderBoard = true; leaderboardAnimationProgress = 0; }
+    }
     return;
   }
   if (!ghost.jumping) { ghost.velocityY = f; ghost.jumping = true; }
@@ -170,6 +193,7 @@ function jump(force) {
 
 document.addEventListener("keydown", e => { if (e.code === "Space") jump(); });
 canvas.addEventListener("touchstart", () => jump());
+canvas.addEventListener("mousedown", () => jump());
 
 // ── Hand Gesture Control ──────────────────────────────────────────────
 let handY = null;        // last known hand y (0–1, top=0)
@@ -181,11 +205,6 @@ const webcamVideo = document.createElement("video");
 webcamVideo.width = 320; webcamVideo.height = 240;
 webcamVideo.autoplay = true; webcamVideo.playsInline = true;
 
-navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-  webcamVideo.srcObject = stream;
-  webcamVideo.play();
-}).catch(e => console.warn("Webcam not available:", e));
-
 // load MediaPipe Hands
 const handsModel = new Hands({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`
@@ -193,13 +212,12 @@ const handsModel = new Hands({
 handsModel.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
 handsModel.onResults(results => {
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    // use wrist landmark (index 0) y position (0=top, 1=bottom)
     const wrist = results.multiHandLandmarks[0][0];
     prevHandY = handY;
     handY = wrist.y;
 
     if (prevHandY !== null) {
-      const dy = prevHandY - handY; // positive = hand moved UP
+      const dy = prevHandY - handY;
       if (dy > 0.03 && gameStarted && !gameOver && !ghost.jumping) {
         const force = -(14 + Math.min(dy * 80, 4));
         jump(force);
@@ -209,11 +227,40 @@ handsModel.onResults(results => {
   }
 });
 
-const handsCamera = new Camera(webcamVideo, {
-  onFrame: async () => { await handsModel.send({ image: webcamVideo }); },
-  width: 320, height: 240
+let cameraActive = false;
+let gameStream = null;
+
+function acquireCamera() {
+  if (cameraActive) return;
+  
+  navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } }).then(stream => {
+    gameStream = stream;
+    webcamVideo.srcObject = stream;
+    webcamVideo.play();
+    cameraActive = true;
+    console.log("Game camera acquired");
+    requestAnimationFrame(processVideoFrame);
+  }).catch(e => {
+    console.warn("Camera busy, retrying in 2s:", e.message);
+    setTimeout(acquireCamera, 2000);
+  });
+}
+
+window.addEventListener('unload', () => {
+  if (gameStream) {
+    gameStream.getTracks().forEach(track => track.stop());
+  }
 });
-handsCamera.start().catch(e => console.warn("MediaPipe camera error:", e));
+
+async function processVideoFrame() {
+  if (!cameraActive) return;
+  if (webcamVideo.readyState >= 2) {
+    await handsModel.send({ image: webcamVideo });
+  }
+  requestAnimationFrame(processVideoFrame);
+}
+
+acquireCamera();
 
 nameInput.addEventListener("keydown", function(e) {
   if (e.key === "Enter") {
@@ -275,6 +322,13 @@ function collision() {
       gameOver = true;
     }
   }
+}
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  groundY = canvas.height - 150;
+  if (!ghost.jumping) ghost.y = groundY - ghost.height;
 }
 
 function updateGhost() {
@@ -373,32 +427,30 @@ function drawNameInput() {
 }
 
 function drawStartScreen() {
-  // draw video background if ready, otherwise dark fill
-  if (bgVideo.readyState >= 2) {
-    if (bgVideo.paused) bgVideo.play();
-    ctx.drawImage(bgVideo, 0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.fillStyle = "#16213e";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-
-  // dark overlay so text is readable
-  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+  // dark overlay to dim the auto-playing game
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // floating title
-  let floatOffset = Math.sin(pulseValue) * 15;
+  // START GAME button
+  ctx.fillStyle = "rgba(224, 86, 26, 0.9)"; // Matches Booth orange
+  let bw = 320; let bh = 80;
+  let bx = canvas.width / 2 - bw / 2;
+  let by = canvas.height / 2 - bh / 2;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 20);
+  ctx.fill();
+  
   ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 80px Arial";
+  ctx.font = "bold 32px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("Ghost Runner", canvas.width / 2, canvas.height / 2 - 60 + floatOffset);
+  ctx.fillText("START GAME", canvas.width / 2, canvas.height / 2 + 10);
 
   // pulsing prompt
   pulseValue += 0.05;
   let alpha = (Math.sin(pulseValue) + 1) / 2;
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-  ctx.font = "28px Arial";
-  ctx.fillText("Press Space/Tap to Start", canvas.width / 2, canvas.height / 2 + 20);
+  ctx.font = "24px Arial";
+  ctx.fillText("Press Space or Tap screen to Play", canvas.width / 2, canvas.height / 2 + 80);
   ctx.textAlign = "left";
 }
 
@@ -410,7 +462,6 @@ function resetGame() {
   score = 0;
   gameSpeed = 5;
   gameOver = false;
-  bgVideo.currentTime = 0;
   spawnObstacle();
 }
 
@@ -422,6 +473,13 @@ function saveScore(name) {
   leaderBoard.push({ name, score });
   leaderBoard.sort((a, b) => b.score - a.score);
   if (leaderBoard.length > 5) leaderBoard = leaderBoard.slice(0, 5);
+  
+  // Persist to API
+  fetch('/api/leaderboard', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(leaderBoard)
+  }).catch(console.error);
 }
 
 // draw the game background video, falling back to dark fill
@@ -438,10 +496,8 @@ function drawGameBackground() {
 function gameLoop(timestamp) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   updateGifs(timestamp);
-  if (!gameStarted) {
-    drawStartScreen();
-    drawGround();
-  } else if (enteringName) {
+  
+  if (enteringName) {
     drawGameBackground();
     drawGround(); drawGhost(); drawObstacles(); drawScore(); drawNameInput();
   } else if (showingLeaderBoard) {
@@ -449,7 +505,15 @@ function gameLoop(timestamp) {
   } else if (gameOver) {
     drawGameBackground();
     drawGround(); drawGhost(); drawObstacles(); drawScore(); drawGameOver();
+  } else if (!gameStarted) {
+    // Attract Mode
+    autoJump();
+    drawGameBackground();
+    updateGhost(); updateObstacles();
+    drawGround(); drawGhost(); drawObstacles();
+    drawStartScreen();
   } else {
+    // Normal Gameplay
     drawGameBackground();
     updateGhost(); updateObstacles(); updateScore(); collision();
     drawGround(); drawGhost(); drawObstacles(); drawScore();

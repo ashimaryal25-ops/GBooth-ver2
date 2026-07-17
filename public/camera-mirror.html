@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camera Mirror</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  video {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; background: #000;
+  }
+  video.mirror { transform: scaleX(-1); }      /* mirror like a real mirror */
+  /* Capture countdown mirrored from the booth — overlays the live video, no freeze. */
+  #countdown {
+    position: fixed; inset: 0; z-index: 5; display: none;
+    align-items: center; justify-content: center; pointer-events: none;
+    color: #fff; font: 900 42vh/1 system-ui, sans-serif;
+    text-shadow: 0 8px 40px rgba(0,0,0,.65), 0 0 14px rgba(0,0,0,.5);
+  }
+  #countdown.show { display: flex; }
+  #countdown.pop { animation: cd-pop .85s ease-out both; }
+  @keyframes cd-pop {
+    0%   { transform: scale(.35); opacity: 0; }
+    25%  { opacity: 1; }
+    100% { transform: scale(1.2); opacity: .8; }
+  }
+</style>
+</head>
+<body>
+  <video id="v" class="mirror" autoplay muted playsinline></video>
+  <div id="countdown"></div>
+
+  <script>
+    const v = document.getElementById('v');
+    let stream = null;
+    let starting = false;
+    let retryTimer = null;
+    const mirrorCh = typeof BroadcastChannel !== 'undefined'
+      ? new BroadcastChannel('cardifybooth-mirror')
+      : null;
+    const PREF_KEY = 'cameraMirror.deviceId.v2';   // v2: ignores any old (wrong) saved pick
+    let lastRelayId = 0;
+
+    function sendToKiosk(message) {
+      mirrorCh?.postMessage(message);
+      fetch('/api/mirror', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'kiosk', ...message }),
+      }).catch(() => {});
+    }
+
+    // Prefer the external webcam: match common external names, OR anything
+    // that is NOT clearly the laptop's built-in camera.
+    function looksExternal(label) {
+      label = (label || '').toLowerCase();
+      if (/usb|logitech|brio|webcam|external|razer|elgato|hd ?pro|c9\d\d|obsbot|insta360|aver|microsoft/.test(label)) return true;
+      return label !== '' && !/integrated|built.?in|internal|front|facetime|laptop/.test(label);
+    }
+
+    function pickPreferred(devs) {
+      const saved = localStorage.getItem(PREF_KEY);
+      if (saved && devs.some(d => d.deviceId === saved)) return saved;        // a pick you made manually
+      const ext = devs.find(d => looksExternal(d.label));
+      if (ext) return ext.deviceId;
+      return devs[devs.length - 1]?.deviceId;                                 // fallback: last in list
+    }
+
+    async function openStream(deviceId) {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      return navigator.mediaDevices.getUserMedia({
+        video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        audio: false,
+      });
+    }
+
+    function streamIsLive() {
+      return !!stream && stream.getVideoTracks().some(track => track.readyState === 'live');
+    }
+
+    function retryCameraSoon() {
+      window.clearTimeout(retryTimer);
+      if (streamIsLive()) return;
+      retryTimer = window.setTimeout(() => start(), 1000);
+    }
+
+    async function start(deviceId) {
+      if (starting || streamIsLive()) return;
+      window.clearTimeout(retryTimer);
+      starting = true;
+      try {
+        stream = await openStream(deviceId);            // first stream unlocks the device labels
+        v.srcObject = stream;
+        const devs = (await navigator.mediaDevices.enumerateDevices())
+          .filter(d => d.kind === 'videoinput');
+
+        if (!deviceId) {                                // auto: switch to the external cam
+          const pref = pickPreferred(devs);
+          const active = stream.getVideoTracks()[0].getSettings().deviceId;
+          if (pref && pref !== active) {
+            stream = await openStream(pref);
+            v.srcObject = stream;
+            deviceId = pref;
+          }
+        }
+        stream.getVideoTracks().forEach(track => {
+          track.onended = () => {
+            stream = null;
+            v.srcObject = null;
+            retryCameraSoon();
+          };
+        });
+        await v.play().catch(() => {});
+        sendToKiosk({ type: 'mirror-ready' });
+      } catch (e) {
+        stream?.getTracks().forEach(track => track.stop());
+        stream = null;
+        v.srcObject = null;
+        sendToKiosk({ type: 'mirror-error' });
+      } finally {
+        starting = false;
+        if (!streamIsLive()) retryCameraSoon();
+      }
+    }
+
+    // Show the booth's capture countdown over the live video (no freeze).
+    const cd = document.getElementById('countdown');
+    function sendCurrentFrame(requestId) {
+      if (!streamIsLive() || v.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !v.videoWidth || !v.videoHeight) {
+        sendToKiosk({ type: 'mirror-error' });
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      sendToKiosk({
+        type: 'captured-photo',
+        requestId,
+        dataUrl: canvas.toDataURL('image/jpeg', 0.92),
+      });
+    }
+
+    function handleCommand(d) {
+      if (d.type === 'mirror-ping') {
+        if (streamIsLive()) sendToKiosk({ type: 'mirror-ready' });
+        else start();
+        return;
+      }
+      if (d.type === 'mirror-start') {
+        if (streamIsLive()) sendToKiosk({ type: 'mirror-ready' });
+        else start();
+        return;
+      }
+      if (d.type === 'capture-request') {
+        sendCurrentFrame(d.requestId);
+        return;
+      }
+      if (d.type !== 'countdown') return;
+      if (d.value > 0) {
+        cd.textContent = d.value;
+        cd.classList.add('show');
+        cd.classList.remove('pop'); void cd.offsetWidth; cd.classList.add('pop');
+      } else {
+        cd.classList.remove('show', 'pop');
+      }
+    }
+
+    async function pollRelay() {
+      try {
+        const response = await fetch(`/api/mirror?role=mirror&since=${lastRelayId}`, { cache: 'no-store' });
+        const data = await response.json();
+        for (const event of data.events || []) {
+          lastRelayId = Math.max(lastRelayId, event.id || 0);
+          handleCommand(event);
+        }
+      } catch {}
+      window.setTimeout(pollRelay, 200);
+    }
+
+    if (mirrorCh) {
+      mirrorCh.onmessage = (e) => handleCommand(e.data || {});
+    }
+
+    start();
+    window.setInterval(() => {
+      if (!streamIsLive()) start();
+    }, 2000);
+    pollRelay();
+  </script>
+</body>
+</html>

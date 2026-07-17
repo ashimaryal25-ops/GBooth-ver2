@@ -4,22 +4,28 @@
     padding: 0;
     box-sizing: border-box;
   }
-  
-  /* body styling */
-  body {
-    background-color: #1a1a2e;
-    display: flex;
-    justify-content: center; /* centers horizontally */
-    align-items: center; /* centers vertically */
-    height: 100vh; /* full browser window height */
+
+  /* Fill the iframe/quadrant completely: no scrollbars, no letterbox padding. */
+  html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background-color: #16213e;
   }
-  
-  /* game canvas */
+
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* game canvas — stretch to fill its container, no frame border */
   canvas {
     background-color: #16213e;
-    border: 4px solid #0f3460;
+    border: none;
     display: block;
-    max-width: 100%; /* never wider than the screen */
+    width: 100%;
+    height: 100%;
   }
   #nameInput{
     display: none;
