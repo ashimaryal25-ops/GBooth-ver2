@@ -43,7 +43,9 @@ export async function POST(_request: Request, { params }: LocalCardPrintRoutePro
 
   try {
     updateLocalCardPrintStatus(id, "printing");
-    const result = await printLocalCardPng(absolutePngPath);
+    const result = await printLocalCardPng(absolutePngPath, {
+      mode: "Fill4x6",
+    });
     updateLocalCardPrintStatus(id, "printed");
 
     return NextResponse.json({

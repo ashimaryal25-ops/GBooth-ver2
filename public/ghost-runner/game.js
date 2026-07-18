@@ -191,14 +191,43 @@ function jump(force, isAuto = false) {
   if (!ghost.jumping) { ghost.velocityY = f; ghost.jumping = true; }
 }
 
-document.addEventListener("keydown", e => { if (e.code === "Space") jump(); });
-canvas.addEventListener("touchstart", () => jump());
-canvas.addEventListener("mousedown", () => jump());
+function reportActivity() {
+  window.parent.postMessage({ type: "ghost-runner:activity" }, window.location.origin);
+}
+
+document.addEventListener("keydown", e => {
+  reportActivity();
+  if (e.code === "Space") jump();
+});
+canvas.addEventListener("touchstart", () => {
+  reportActivity();
+  jump();
+});
+canvas.addEventListener("mousedown", () => {
+  reportActivity();
+  jump();
+});
+
+window.addEventListener("message", event => {
+  if (
+    event.origin !== window.location.origin ||
+    event.data?.type !== "ghost-runner:reset"
+  ) {
+    return;
+  }
+
+  gameStarted = false;
+  enteringName = false;
+  showingLeaderBoard = false;
+  leaderboardAnimationProgress = 0;
+  nameInput.value = "";
+  nameInput.style.display = "none";
+  resetGame();
+});
 
 // ── Hand Gesture Control ──────────────────────────────────────────────
 let handY = null;        // last known hand y (0–1, top=0)
 let prevHandY = null;    // previous frame hand y
-let gestureReady = false;
 
 // set up webcam + MediaPipe Hands
 const webcamVideo = document.createElement("video");
@@ -220,10 +249,10 @@ handsModel.onResults(results => {
       const dy = prevHandY - handY;
       if (dy > 0.03 && gameStarted && !gameOver && !ghost.jumping) {
         const force = -(14 + Math.min(dy * 80, 4));
+        reportActivity();
         jump(force);
       }
     }
-    gestureReady = true;
   }
 });
 
@@ -324,13 +353,6 @@ function collision() {
   }
 }
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  groundY = canvas.height - 150;
-  if (!ghost.jumping) ghost.y = groundY - ghost.height;
-}
-
 function updateGhost() {
   ghost.velocityY += gravity;
   ghost.y += ghost.velocityY;
@@ -419,11 +441,10 @@ function drawNameInput() {
   ctx.font = "28px Arial";
   ctx.fillText("Enter your name and press Enter:", canvas.width / 2, canvas.height / 2 - 40);
   ctx.textAlign = "left";
-  nameInput.style.display = "block";
-  nameInput.style.left = (canvas.offsetLeft + canvas.width / 2 - 150) + "px";
-  nameInput.style.top = (canvas.offsetTop + canvas.height / 2) + "px";
-  nameInput.style.width = "300px";
-  nameInput.focus();
+  if (nameInput.style.display !== "block") {
+    nameInput.style.display = "block";
+    nameInput.focus();
+  }
 }
 
 function drawStartScreen() {

@@ -1,6 +1,6 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element -- Portraits and QR codes are generated data URLs. */
+/* eslint-disable @next/next/no-img-element -- Portraits are generated data URLs. */
 
 import type { CardIdentity } from "@/lib/card-schema";
 import { getCardTemplate } from "@/lib/card-templates";
@@ -8,10 +8,9 @@ import { getCardTemplate } from "@/lib/card-templates";
 interface CardPreviewProps {
   card: CardIdentity;
   photo: string;
-  qrCode?: string;
 }
 
-export function CardPreview({ card, photo, qrCode }: CardPreviewProps) {
+export function CardPreview({ card, photo }: CardPreviewProps) {
   const template = getCardTemplate(card.colorTheme);
   const traitScores = Object.entries(card.stats)
     .filter(([label]) => label !== "Campus Power")
@@ -91,11 +90,10 @@ export function CardPreview({ card, photo, qrCode }: CardPreviewProps) {
       </section>
 
       <div className="gold-card__qr">
-        {qrCode ? (
-          <img src={qrCode} alt="QR code for this generated card" />
-        ) : (
-          <span aria-hidden="true" />
-        )}
+        <img
+          src="/cardify/icl-logo.png"
+          alt="Innovation and Creativity Lab"
+        />
       </div>
     </article>
   );

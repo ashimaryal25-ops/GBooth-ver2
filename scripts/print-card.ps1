@@ -6,7 +6,7 @@ param(
 
   [string]$JobName = "CardifyBooth card",
 
-  [ValidateSet("FitPage", "RollWidth4", "DoubleStrip4x6")]
+  [ValidateSet("FitPage", "Fill4x6", "RollWidth4", "DoubleStrip4x6")]
   [string]$Mode = "FitPage",
 
   [double]$RollWidthInches = 4.0,
@@ -62,7 +62,7 @@ try {
     $paperName = "CardifyBooth roll $($RollWidthInches.ToString('0.##'))x$(($RollWidthInches / $imageRatio).ToString('0.##'))"
 
     $document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize $paperName, $paperWidthHundredths, $paperHeightHundredths
-  } elseif ($Mode -eq "DoubleStrip4x6") {
+  } elseif ($Mode -eq "DoubleStrip4x6" -or $Mode -eq "Fill4x6") {
     Write-Output "Supported paper sizes for printer '$($document.PrinterSettings.PrinterName)':"
     $paperSizes = @($document.PrinterSettings.PaperSizes)
     foreach ($ps in $paperSizes) {
@@ -174,6 +174,21 @@ try {
         $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
         $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
       }
+    } elseif ($Mode -eq "Fill4x6") {
+      # Fill the whole 4x6 page. The card renderer is slightly narrower than
+      # 4x6, so "fit" creates white bars on the left and right. "Fill" uses a
+      # small top/bottom bleed instead, matching borderless photo printing.
+      $bounds = $eventArgs.PageBounds
+      $scale = [Math]::Max($bounds.Width / $image.Width, $bounds.Height / $image.Height)
+      $width = $image.Width * $scale
+      $height = $image.Height * $scale
+      $x = $bounds.X + (($bounds.Width - $width) / 2)
+      $y = $bounds.Y + (($bounds.Height - $height) / 2)
+      $target = New-Object System.Drawing.RectangleF $x, $y, $width, $height
+
+      $eventArgs.Graphics.SetClip($bounds)
+      $eventArgs.Graphics.DrawImage($image, $target)
+      $eventArgs.Graphics.ResetClip()
     } else {
       $bounds = $eventArgs.PageSettings.PrintableArea
       if ($bounds.Width -le 0 -or $bounds.Height -le 0) {

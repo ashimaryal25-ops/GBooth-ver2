@@ -31,7 +31,24 @@ notepad .env.local
 ```
 
 5. Fill in `OPENAI_API_KEY` in `.env.local`.
-6. Configure the kiosk printer.
+6. Configure public phone downloads.
+
+Create a public Vercel Blob store for the booth project, then copy its
+`BLOB_READ_WRITE_TOKEN` into `.env.local`:
+
+```env
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+```
+
+The token stays in the local Next.js server environment. It is not included in
+the QR or browser JavaScript. The app uploads only the finished card/collage
+PNG, never the separate raw camera portrait. It keeps the newest 100 public
+outputs and removes older ones.
+
+Without this token, local save and printing still work, but the final screen
+shows that phone download is unavailable.
+
+7. Configure the kiosk printer.
 
 To use the Windows default printer, leave this blank in `.env.local`:
 
@@ -53,9 +70,11 @@ CARDIFYBOOTH_PRINTER_NAME=Your Exact Printer Name
 
 The app prints saved final PNG files through `scripts/print-card.ps1`. It does not use browser printing and does not open a print preview. Trading cards print the saved card PNG, and photo collage strips print the exact rendered collage canvas PNG.
 
-Photo collage prints use roll-style sizing: the print job requests a fixed 4-inch paper width and calculates the paper length from the rendered strip image. This lets the printer cut a shorter or longer strip for 2, 3, or 4-photo layouts when the printer driver supports custom roll/cut lengths.
+Trading cards use a 4x6 fill mode. It fills the full sheet and allows a small
+top/bottom bleed so white bars do not appear on the left and right. Photo
+collages use the configured 4x6 double-strip layout.
 
-7. Build and run:
+8. Build and run:
 
 ```powershell
 npm run build
@@ -103,3 +122,14 @@ Collage print:
 4. The kiosk sends the exact collage canvas PNG directly to the configured Windows printer.
 
 If printing fails, confirm the printer name in `.env.local`, make sure Windows can print to that device, then restart the kiosk app so the environment setting is reloaded.
+
+## Phone download check
+
+1. Confirm the booth computer has Internet access.
+2. Generate a card or finish a collage.
+3. Wait for the download QR to appear.
+4. Scan it with a phone that is not connected to the booth computer.
+5. Confirm the PNG downloads from an HTTPS Vercel Blob URL.
+
+The printed card and strip keep the ICL logo. The phone-download QR is displayed
+beside the output on screen and is not baked into the physical print.

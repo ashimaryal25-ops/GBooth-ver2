@@ -14,6 +14,7 @@
   }
 
   body {
+    position: relative;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -27,15 +28,25 @@
     width: 100%;
     height: 100%;
   }
-  #nameInput{
+  #nameInput {
     display: none;
     position: absolute;
-    font-size: 24px;
-    padding: 10px 20px;
+    z-index: 2;
+    left: 50%;
+    top: 58%;
+    transform: translate(-50%, -50%);
+    width: min(320px, 72%);
+    font-size: clamp(16px, 2vw, 24px);
+    padding: clamp(8px, 1.2vw, 12px) 20px;
     border: 2px solid #ffffff;
-    background: rgba(0,0,0,0.8);
+    background: rgba(0, 0, 0, 0.88);
     color: #ffffff;
     border-radius: 8px;
     outline: none;
     text-align: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  #nameInput:focus {
+    border-color: #f4b942;
   }

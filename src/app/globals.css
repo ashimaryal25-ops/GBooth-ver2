@@ -78,7 +78,8 @@ select:focus-visible {
 
 .gold-card {
   position: relative;
-  width: 300px;
+  /* 320x480 is an exact 2:3 canvas, matching a physical 4x6 print. */
+  width: 320px;
   height: 480px;
   overflow: hidden;
   /* Templates are squared full-bleed rectangles, so the card is a clean
@@ -155,7 +156,7 @@ select:focus-visible {
 
 .gold-card__header {
   position: absolute;
-  inset: 20px 18px auto;
+  inset: 20px 28px auto;
   height: 34px;
   display: flex;
   align-items: center;
@@ -213,7 +214,7 @@ select:focus-visible {
 .gold-card__portrait {
   position: absolute;
   top: 57px;
-  left: 13px;
+  left: 23px;
   width: 274px;
   height: 205px;
   overflow: hidden;
@@ -225,7 +226,7 @@ select:focus-visible {
 .gold-card__identity {
   position: absolute;
   top: 278px;
-  left: 14px;
+  left: 24px;
   width: 272px;
   height: 33px;
   display: flex;
@@ -264,7 +265,7 @@ select:focus-visible {
 .gold-card__traits {
   position: absolute;
   top: 314px;
-  left: 14px;
+  left: 24px;
   width: 272px;
   display: grid;
   gap: 4px;
@@ -312,7 +313,7 @@ select:focus-visible {
 .gold-card__power {
   position: absolute;
   top: 364px;
-  left: 13px;
+  left: 23px;
   width: 274px;
   height: 31px;
   display: flex;
@@ -342,7 +343,7 @@ select:focus-visible {
 .gold-card__known {
   position: absolute;
   top: 402px;
-  left: 14px;
+  left: 24px;
   width: 224px;
   height: 33px;
   overflow: hidden;
@@ -362,7 +363,7 @@ select:focus-visible {
 .gold-card__ability {
   position: absolute;
   top: 437px;
-  left: 14px;
+  left: 24px;
   width: 224px;
   height: 31px;
   overflow: hidden;
@@ -382,7 +383,7 @@ select:focus-visible {
 
 .gold-card__qr {
   position: absolute;
-  right: 12px;
+  right: 22px;
   bottom: 22px;
   width: 46px;
   height: 46px;
@@ -398,12 +399,7 @@ select:focus-visible {
 .gold-card__qr img {
   width: 100%;
   height: 100%;
-}
-
-.gold-card__qr > span {
-  width: 100%;
-  height: 100%;
-  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  object-fit: contain;
 }
 
 .sk {

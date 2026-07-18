@@ -50,7 +50,7 @@ function getRecognitionConstructor(): SpeechRecognitionConstructor | null {
 
 interface UseSpeechToTextOptions {
   lang?: string;
-  onResult: (transcript: string) => void;
+  onTranscript: (transcript: string) => void;
 }
 
 // The set of supported APIs never changes after load, so there is nothing to subscribe to.
@@ -61,7 +61,7 @@ const subscribeToNothing = () => () => {};
  * (no API key); `supported` is false where the API is unavailable so callers
  * can hide the control and fall back to typing.
  */
-export function useSpeechToText({ lang = "en-US", onResult }: UseSpeechToTextOptions) {
+export function useSpeechToText({ lang = "en-US", onTranscript }: UseSpeechToTextOptions) {
   const supported = useSyncExternalStore(
     subscribeToNothing,
     () => getRecognitionConstructor() !== null,
@@ -70,11 +70,11 @@ export function useSpeechToText({ lang = "en-US", onResult }: UseSpeechToTextOpt
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const onResultRef = useRef(onResult);
+  const onTranscriptRef = useRef(onTranscript);
 
   useEffect(() => {
-    onResultRef.current = onResult;
-  }, [onResult]);
+    onTranscriptRef.current = onTranscript;
+  }, [onTranscript]);
 
   useEffect(() => () => recognitionRef.current?.abort(), []);
 
@@ -98,19 +98,19 @@ export function useSpeechToText({ lang = "en-US", onResult }: UseSpeechToTextOpt
     const recognition = new RecognitionCtor();
     recognition.lang = lang;
     recognition.continuous = true;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
 
     recognition.onresult = (event) => {
-      let finalText = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        if (result.isFinal) {
-          finalText += result[0].transcript;
-        }
+      // Rebuild the entire recognition session on every result event. This
+      // includes both final phrases and the current interim phrase, allowing
+      // the form to display words while the guest is still speaking.
+      let liveText = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        liveText += `${event.results[index][0].transcript} `;
       }
 
-      if (finalText.trim()) {
-        onResultRef.current(finalText);
+      if (liveText.trim()) {
+        onTranscriptRef.current(liveText.trim());
       }
     };
 

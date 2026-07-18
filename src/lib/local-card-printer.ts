@@ -5,7 +5,7 @@ export type PrintCardResult = {
   printerName: string | null;
 };
 
-type PrintMode = "FitPage" | "RollWidth4" | "DoubleStrip4x6";
+type PrintMode = "FitPage" | "Fill4x6" | "RollWidth4" | "DoubleStrip4x6";
 
 type PrintOptions = {
   jobName?: string;

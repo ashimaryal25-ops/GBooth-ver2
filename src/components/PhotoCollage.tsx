@@ -8,7 +8,7 @@
  *
  * Ported faithfully from her Gbooth.html / Gboothjava.js:
  *   - layout picker (2 / 3 / 4 slots) with her strip mock-ups
- *   - 5s countdown capture + retake, mirrored viewfinder
+ *   - 3s countdown capture + retake, mirrored viewfinder
  *   - strip canvas (360x960) with her exact per-slot spacing maths
  *   - her 6 filters, 5 preset frame colours + colour wheel, 8 emoji stickers
  *   - final screen: QR + strip + print, 30s auto-reset
@@ -18,20 +18,20 @@
  *     entry point, so her second home screen would be a duplicate.
  *   - Her UI chrome was 17 PNGs (buttons/headings/background) that were never
  *     committed, so they are rebuilt in CSS using her palette and typography.
- *   - QR is generated locally with the `qrcode` package (same ICL URL she used)
- *     instead of fetching api.qrserver.com. Drawing a cross-origin image would
- *     TAINT the canvas and make toDataURL() throw - which would break printing -
- *     and it would also fail offline at an event.
+ *   - The printed strip carries the ICL mark. A separate final-screen QR points
+ *     to a temporary public PNG so guests can download it on their phones.
  *   - Printing posts the strip PNG to /api/collage/print (silent DS-RX1 print,
  *     DoubleStrip4x6 = two strips per 4x6) instead of window.print().
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { uploadPublicPng } from "@/lib/public-download";
 
 type CollageView = "layout" | "camera" | "decor" | "final";
 type FilterName = "none" | "traditional" | "sepia" | "soft" | "y2k" | "vivid";
 type Sticker = { id: number; emoji: string; x: number; y: number; size: number };
+type PaletteDrag = { emoji: string; x: number; y: number };
 
 type PhotoCollageProps = {
   /** Return to the app's home (the 4-quadrant chooser). */
@@ -48,8 +48,6 @@ type PhotoCollageProps = {
 const STRIP_W = 360;
 const STRIP_H = 960;
 const STRIP_PADDING_X = 24;
-
-const ICL_URL = "https://icl.sites.gettysburg.edu/";
 
 // Her palette.
 const PRESET_COLORS = ["#043371", "#CC4E00", "#EB9AB2", "#CDED76", "#AEA43A"];
@@ -108,17 +106,24 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [downloadState, setDownloadState] = useState<
+    "idle" | "uploading" | "ready" | "error"
+  >("idle");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [stripDataUrl, setStripDataUrl] = useState("");
   const [printState, setPrintState] = useState<"idle" | "printing" | "sent">("idle");
   const [printError, setPrintError] = useState<string | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState(30);
+  const [paletteDrag, setPaletteDrag] = useState<PaletteDrag | null>(null);
+  const [brandReady, setBrandReady] = useState(false);
 
   const lastRelayIdRef = useRef(0);
   const captureResolversRef = useRef(new Map<string, (photo: string | null) => void>());
   const photosRef = useRef<HTMLCanvasElement[]>([]);
   const decorCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const qrImgRef = useRef<HTMLImageElement | null>(null);
+  const brandImgRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null);
+  const paletteDragRef = useRef<PaletteDrag | null>(null);
 
   // Held in a ref: the parent passes an inline arrow, so depending on it
   // directly would restart the capture session on every parent render.
@@ -134,29 +139,14 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     onExitRef.current = onExit;
   }, [onExit]);
 
-  // --- QR: generated locally so the canvas is never tainted -----------------
+  // The ICL mark is local, so drawing it cannot taint the printable canvas.
   useEffect(() => {
-    let alive = true;
-    QRCode.toDataURL(ICL_URL, {
-      margin: 1,
-      width: 180,
-      color: { dark: "#222222", light: "#ffffff" },
-    })
-      .then((url) => {
-        if (!alive) return;
-        setQrDataUrl(url);
-        const img = new Image();
-        img.onload = () => {
-          qrImgRef.current = img;
-        };
-        img.src = url;
-      })
-      .catch(() => {
-        /* strip still renders without the QR */
-      });
-    return () => {
-      alive = false;
+    const img = new Image();
+    img.onload = () => {
+      brandImgRef.current = img;
+      setBrandReady(true);
     };
+    img.src = "/cardify/icl-logo.png";
   }, []);
 
   // --- Camera relay ---------------------------------------------------------
@@ -251,7 +241,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       await sleep(500);
 
       for (let i = 0; i < slots; i++) {
-        for (let t = 5; t > 0; t--) {
+        for (let t = 3; t > 0; t--) {
           if (cancelled) return;
           setCountdown(t);
           sendToMirror({ type: "countdown", value: t });
@@ -359,10 +349,14 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     ctx.fillText("GETTYSBURG COLLEGE", STRIP_W / 2, STRIP_H - 110);
     (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "0px";
 
-    const qrImg = qrImgRef.current;
-    if (qrImg) {
-      const qrSize = 65;
-      ctx.drawImage(qrImg, STRIP_W - STRIP_PADDING_X - qrSize, STRIP_H - 85, qrSize, qrSize);
+    const brandImg = brandReady ? brandImgRef.current : null;
+    if (brandImg) {
+      const brandSize = 62;
+      const brandX = STRIP_W - STRIP_PADDING_X - brandSize;
+      const brandY = STRIP_H - 82;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(brandX - 3, brandY - 3, brandSize + 6, brandSize + 6);
+      ctx.drawImage(brandImg, brandX, brandY, brandSize, brandSize);
     }
 
     ctx.save();
@@ -373,11 +367,11 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       ctx.fillText(s.emoji, s.x, s.y);
     });
     ctx.restore();
-  }, [bgColor, filter, stickers]);
+  }, [bgColor, filter, stickers, brandReady]);
 
   useEffect(() => {
     if (view === "decor") renderStrip();
-  }, [view, renderStrip, qrDataUrl]);
+  }, [view, renderStrip]);
 
   // --- Sticker dragging on the canvas ---------------------------------------
   const canvasCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -416,6 +410,62 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     }
   };
 
+  const startPaletteDrag = (
+    emoji: string,
+    e: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    e.preventDefault();
+    const nextDrag = { emoji, x: e.clientX, y: e.clientY };
+    paletteDragRef.current = nextDrag;
+    setPaletteDrag(nextDrag);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const movePaletteDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!paletteDragRef.current) return;
+    const nextDrag = {
+      ...paletteDragRef.current,
+      x: e.clientX,
+      y: e.clientY,
+    };
+    paletteDragRef.current = nextDrag;
+    setPaletteDrag(nextDrag);
+  };
+
+  const finishPaletteDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const activeDrag = paletteDragRef.current;
+    paletteDragRef.current = null;
+    setPaletteDrag(null);
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (!activeDrag || !decorCanvasRef.current) return;
+
+    const box = decorCanvasRef.current.getBoundingClientRect();
+    const droppedOnStrip =
+      e.clientX >= box.left &&
+      e.clientX <= box.right &&
+      e.clientY >= box.top &&
+      e.clientY <= box.bottom;
+
+    if (!droppedOnStrip) return;
+
+    const size = 45;
+    const x = ((e.clientX - box.left) / box.width) * STRIP_W;
+    const y = ((e.clientY - box.top) / box.height) * STRIP_H;
+    setStickers((previous) => [
+      ...previous,
+      {
+        id: Date.now() + Math.random(),
+        emoji: activeDrag.emoji,
+        x: Math.min(STRIP_W - size / 2, Math.max(size / 2, x)),
+        y: Math.min(STRIP_H - size / 2, Math.max(size / 2, y)),
+        size,
+      },
+    ]);
+  };
+
   // --- Final screen: 30s auto-reset ----------------------------------------
   // (secondsRemaining is primed in goFinal, not here, to avoid a sync setState
   //  inside the effect body.)
@@ -434,12 +484,40 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     return () => clearInterval(id);
   }, [view]);
 
-  const goFinal = () => {
+  const goFinal = async () => {
     const canvas = decorCanvasRef.current;
-    if (canvas) setStripDataUrl(canvas.toDataURL("image/png"));
+    if (!canvas) return;
+
+    const imageDataUrl = canvas.toDataURL("image/png");
+    setStripDataUrl(imageDataUrl);
+    setQrDataUrl("");
+    setDownloadError(null);
+    setDownloadState("uploading");
     stopCamera();
     setSecondsRemaining(30);
     setView("final");
+
+    try {
+      const publicFile = await uploadPublicPng({
+        kind: "collage",
+        id: crypto.randomUUID(),
+        imageDataUrl,
+      });
+      const qr = await QRCode.toDataURL(publicFile.downloadUrl, {
+        margin: 2,
+        width: 320,
+        color: { dark: "#111111", light: "#ffffff" },
+      });
+      setQrDataUrl(qr);
+      setDownloadState("ready");
+    } catch (error) {
+      setDownloadState("error");
+      setDownloadError(
+        error instanceof Error
+          ? error.message
+          : "Phone download is unavailable.",
+      );
+    }
   };
 
   const handlePrint = async () => {
@@ -490,6 +568,16 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
         .gbooth-countdown { animation: gboothPulseCount 1s infinite alternate; }
         .gbooth-wheel { position:absolute; top:-10px; left:-10px; width:68px; height:68px; border:none; background:none; cursor:pointer; -webkit-appearance:none; }
       `}</style>
+
+      {paletteDrag && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[100] grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border-2 border-white bg-[#043371]/90 text-[40px] shadow-xl"
+          style={{ left: paletteDrag.x, top: paletteDrag.y }}
+        >
+          {paletteDrag.emoji}
+        </div>
+      )}
 
       {/* ================= LAYOUT PICKER ================= */}
       {view === "layout" && (
@@ -727,24 +815,20 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
                 {/* STICKERS */}
                 <div className="flex flex-col items-start">
                   <h3 className={heading}>Stickers</h3>
+                  <p className="-mt-2 mb-3 text-[12px] font-bold text-white/85">
+                    Drag one onto the strip
+                  </p>
                   <div className="grid w-full grid-cols-4 gap-3">
                     {STICKER_EMOJIS.map((emoji) => (
                       <button
                         key={emoji}
                         type="button"
-                        onClick={() =>
-                          setStickers((prev) => [
-                            ...prev,
-                            {
-                              id: Date.now() + Math.random(),
-                              emoji,
-                              x: STRIP_W / 2,
-                              y: STRIP_H / 2,
-                              size: 45,
-                            },
-                          ])
-                        }
-                        className="flex aspect-square select-none items-center justify-center border border-white/40 bg-white/15 text-[28px] transition-transform hover:scale-105 hover:bg-white/25"
+                        onPointerDown={(event) => startPaletteDrag(emoji, event)}
+                        onPointerMove={movePaletteDrag}
+                        onPointerUp={finishPaletteDrag}
+                        onPointerCancel={finishPaletteDrag}
+                        className="flex aspect-square touch-none select-none items-center justify-center border border-white/40 bg-white/15 text-[28px] transition-transform hover:scale-105 hover:bg-white/25 active:cursor-grabbing"
+                        aria-label={`Drag ${emoji} sticker onto the strip`}
                       >
                         {emoji}
                       </button>
@@ -815,15 +899,37 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
             <div className="flex w-[300px] flex-col items-center justify-center">
               <div className="flex h-[250px] w-[250px] items-center justify-center bg-[#8bbceb] shadow-[0_10px_20px_rgba(0,0,0,0.15)]">
                 <div className="flex h-[180px] w-[180px] items-center justify-center bg-white p-2.5">
-                  {qrDataUrl && (
+                  {qrDataUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={qrDataUrl} alt="QR code to the ICL website" className="h-full w-full" />
+                    <img
+                      src={qrDataUrl}
+                      alt="QR code to download your photo strip"
+                      className="h-full w-full"
+                    />
+                  ) : downloadState === "error" ? (
+                    <p className="px-3 text-center text-sm font-black text-[#9f2d20]">
+                      QR unavailable
+                    </p>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 text-[#043371]">
+                      <span className="h-8 w-8 animate-spin rounded-full border-4 border-[#c8d5e6] border-t-[#043371]" />
+                      <span className="text-[11px] font-black uppercase tracking-[1px]">
+                        Preparing
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
               <h3 className="mt-6 text-center font-['Arial_Black',Arial,sans-serif] text-[20px] uppercase text-black">
-                Download your strip!
+                Download your strip
               </h3>
+              <p className="mt-2 max-w-[270px] text-center text-sm font-bold text-black/65" aria-live="polite">
+                {downloadState === "ready"
+                  ? "Scan with your phone camera and save the PNG."
+                  : downloadState === "error"
+                    ? (downloadError ?? "Phone download is unavailable.")
+                    : "Creating your phone download..."}
+              </p>
             </div>
 
             {/* CENTER: strip */}

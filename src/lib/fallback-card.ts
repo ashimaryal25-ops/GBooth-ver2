@@ -59,6 +59,17 @@ function rarityFromCampusPower(campusPower: number): CardIdentity["rarity"] {
   return "Common";
 }
 
+function compactDescription(description: string, maxLength = 120) {
+  const cleaned = description.replace(/\s+/g, " ").replace(/\.$/, "").trim();
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+
+  const shortened = cleaned.slice(0, maxLength + 1);
+  const lastSpace = shortened.lastIndexOf(" ");
+  return `${shortened.slice(0, lastSpace > 0 ? lastSpace : maxLength).trim()}...`;
+}
+
 export function createFallbackCard(input: CardRequest): CardIdentity {
   const seed = `${input.name}-${input.selfDescription}`;
   const title = titles[score(seed, 1) % titles.length];
@@ -72,7 +83,7 @@ export function createFallbackCard(input: CardRequest): CardIdentity {
     Object.values(traitStats).reduce((sum, value) => sum + value, 0) / selectedTraits.length,
   );
   const rarity = rarityFromCampusPower(campusPower);
-  const cleanedDescription = input.selfDescription.replace(/\.$/, "");
+  const cleanedDescription = compactDescription(input.selfDescription);
 
   const card = {
     displayName: input.name,

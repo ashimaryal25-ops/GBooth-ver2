@@ -30,7 +30,7 @@ export const cardSchema = z.object({
 export const cardRequestSchema = z.object({
   name: z.string().trim().min(1).max(28),
   theme: z.string().trim().min(1).max(40),
-  selfDescription: z.string().trim().min(8).max(220),
+  selfDescription: z.string().trim().min(8),
 });
 
 export type CardIdentity = z.infer<typeof cardSchema>;

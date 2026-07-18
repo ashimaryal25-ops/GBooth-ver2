@@ -1,8 +1,7 @@
 "use client";
 
-import { ArrowRight, Camera, Info, Landmark } from "lucide-react";
-import QRCode from "qrcode";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, Camera, Home, Info, Landmark, Maximize2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CardForm } from "@/components/CardForm";
 import { CardPreview } from "@/components/CardPreview";
 import { CardReveal } from "@/components/CardReveal";
@@ -39,9 +38,11 @@ export function BoothApp() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [card, setCard] = useState<CardIdentity | null>(null);
   const [cardId, setCardId] = useState<string | null>(null);
-  const [qrCode, setQrCode] = useState<string>("");
   const [isSampleCardOpen, setIsSampleCardOpen] = useState(false);
+  const [isGameFullscreen, setIsGameFullscreen] = useState(false);
   const [idleTimeout, setIdleTimeout] = useState(120000);
+  const gamePanelRef = useRef<HTMLDivElement>(null);
+  const gameFrameRef = useRef<HTMLIFrameElement>(null);
   // Bumped by children (e.g. the collage taking a shot) to signal "still in use"
   // when there are no pointer/key events because the guest is just posing.
   const [activityNonce, setActivityNonce] = useState(0);
@@ -50,7 +51,7 @@ export function BoothApp() {
     if (step === "choose" || step === "generating") return;
 
     let timeout: ReturnType<typeof setTimeout>;
-    // The collage takes a while with no taps at all (5s countdown per shot while
+    // The collage takes a while with no taps at all (3s countdown per shot while
     // the guest poses), so it gets a much longer leash than the tap-driven card
     // flow. The collage also reports activity of its own via onActivity.
     const currentTimeout =
@@ -84,12 +85,87 @@ export function BoothApp() {
     };
   }, [step, idleTimeout, activityNonce]);
 
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsGameFullscreen(document.fullscreenElement === gamePanelRef.current);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isGameFullscreen) return;
+
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const returnToHome = async () => {
+      gameFrameRef.current?.contentWindow?.postMessage(
+        { type: "ghost-runner:reset" },
+        window.location.origin,
+      );
+
+      if (document.fullscreenElement === gamePanelRef.current) {
+        await document.exitFullscreen();
+      }
+    };
+
+    const resetTimer = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => void returnToHome(), 30000);
+    };
+
+    const handleGameActivity = (event: MessageEvent) => {
+      if (
+        event.origin === window.location.origin &&
+        event.source === gameFrameRef.current?.contentWindow &&
+        event.data?.type === "ghost-runner:activity"
+      ) {
+        resetTimer();
+      }
+    };
+
+    window.addEventListener("message", handleGameActivity);
+    window.addEventListener("pointerdown", resetTimer);
+    window.addEventListener("keydown", resetTimer);
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener("message", handleGameActivity);
+      window.removeEventListener("pointerdown", resetTimer);
+      window.removeEventListener("keydown", resetTimer);
+    };
+  }, [isGameFullscreen]);
+
+  const toggleGameFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement === gamePanelRef.current) {
+        await document.exitFullscreen();
+        return;
+      }
+      await gamePanelRef.current?.requestFullscreen();
+    } catch {
+      // Fullscreen can be blocked by browser or kiosk policy; the embedded
+      // quarter remains playable when that happens.
+    }
+  }, []);
+
+  const leaveGameForHome = useCallback(async () => {
+    gameFrameRef.current?.contentWindow?.postMessage(
+      { type: "ghost-runner:reset" },
+      window.location.origin,
+    );
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    }
+    setStep("choose");
+  }, []);
+
   const resetCardFlow = useCallback(() => {
     setStep("cardSetup");
     setPhoto(null);
     setCard(null);
     setCardId(null);
-    setQrCode("");
     setIsSampleCardOpen(false);
   }, []);
 
@@ -98,7 +174,6 @@ export function BoothApp() {
     setPhoto(null);
     setCard(null);
     setCardId(null);
-    setQrCode("");
     setIsSampleCardOpen(false);
     setIdleTimeout(120000);
   }, []);
@@ -115,23 +190,11 @@ export function BoothApp() {
       setCard(generated.card);
       setCardId(generated.cardId);
 
-      const qrPayload = "https://icl.sites.gettysburg.edu/";
-
-      const qr = await QRCode.toDataURL(qrPayload, {
-        margin: 1,
-        width: 180,
-        color: {
-          dark: "#222222",
-          light: "#ffffff",
-        },
-      });
-
       const elapsed = performance.now() - startedAt;
       if (elapsed < 1200) {
         await new Promise((resolve) => setTimeout(resolve, 1200 - elapsed));
       }
 
-      setQrCode(qr);
       setStep("reveal");
     },
     [photo],
@@ -208,13 +271,36 @@ export function BoothApp() {
             </button>
 
             {/* Quarter 3 — Ghost Runner (live, running in-quadrant) */}
-            <div className="relative overflow-hidden bg-[#16213e]">
+            <div ref={gamePanelRef} className="group relative overflow-hidden bg-[#16213e]">
               <iframe
+                ref={gameFrameRef}
                 src="/ghost-runner/index.html"
                 title="Ghost Runner Game"
                 allow="camera; fullscreen"
+                allowFullScreen
                 className="absolute inset-0 h-full w-full border-0"
               />
+              {isGameFullscreen && (
+                <button
+                  type="button"
+                  onClick={leaveGameForHome}
+                  className="absolute bottom-6 right-6 z-20 inline-flex h-16 items-center gap-3 rounded-[8px] border-2 border-white bg-[var(--gc-orange)] px-7 text-xl font-black text-white shadow-[0_2px_8px_rgba(0,0,0,0.28)] transition-colors hover:bg-[#b94300] active:bg-[#963700]"
+                >
+                  <Home size={26} strokeWidth={2.5} />
+                  Home
+                </button>
+              )}
+              {!isGameFullscreen && (
+                <button
+                  type="button"
+                  onClick={toggleGameFullscreen}
+                  aria-label="Open game full screen"
+                  title="Full screen"
+                  className="absolute right-4 top-4 z-20 grid h-11 w-11 place-items-center rounded-[8px] border border-white/30 bg-black/70 text-white hover:bg-black/85"
+                >
+                  <Maximize2 size={21} />
+                </button>
+              )}
             </div>
 
             {/* Quarter 4 — Description */}
@@ -373,7 +459,6 @@ export function BoothApp() {
             card={card}
             cardId={cardId}
             photo={photo}
-            qrCode={qrCode}
             onRestart={resetCardFlow}
             onGoHome={resetToChooser}
           />
