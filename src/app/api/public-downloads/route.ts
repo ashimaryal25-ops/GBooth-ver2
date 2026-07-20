@@ -68,7 +68,18 @@ function detectLanBaseUrl(request: Request): string | null {
 
 function resolveLocalBaseUrl(request: Request): string | null {
   const configured = process.env.CARDIFYBOOTH_LOCAL_DOWNLOAD_BASE_URL?.trim();
-  if (!configured) return null;
+
+  // Configuring a hotspot SSID means the booth is delivering over its own
+  // Wi-Fi, so imply local mode rather than making the operator set a second
+  // variable. Setting only the SSID otherwise shows guests a join-the-Wi-Fi QR
+  // next to a download QR that can never work.
+  const hotspotConfigured = Boolean(
+    process.env.NEXT_PUBLIC_CARDIFYBOOTH_HOTSPOT_SSID?.trim(),
+  );
+
+  if (!configured) {
+    return hotspotConfigured ? detectLanBaseUrl(request) : null;
+  }
 
   const base =
     configured.toLowerCase() === "auto" ? detectLanBaseUrl(request) : configured;
