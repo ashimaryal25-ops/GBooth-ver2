@@ -328,6 +328,29 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
     for (let i = 0; i < slotCount; i++) {
       const y = topOffsetMargin + i * (photoH + gapSpacingValue);
+
+      // Never stretch the photo into the slot: the 4-shot slot is wider than the
+      // 4:3 source, so a plain fit would squash faces vertically. Instead crop
+      // the source to the slot's aspect ("cover") using native pixels — no
+      // distortion, no resolution loss. Horizontal crop is centred; vertical
+      // crop keeps the TOP of the frame so heads never get sliced off.
+      const src = photos[i];
+      const targetAspect = photoW / photoH;
+      const srcAspect = src.width / src.height;
+      let sx = 0;
+      let sy = 0;
+      let sw = src.width;
+      let sh = src.height;
+      if (srcAspect > targetAspect) {
+        // Source is wider than the slot — trim the sides, keep full height.
+        sw = src.height * targetAspect;
+        sx = (src.width - sw) / 2;
+      } else {
+        // Source is taller than the slot — trim the bottom, keep the top.
+        sh = src.width / targetAspect;
+        sy = 0;
+      }
+
       ctx.save();
       // Clip so filters never bleed past the photo frame.
       ctx.beginPath();
@@ -337,7 +360,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       // Mirror, like a real booth.
       ctx.translate(STRIP_PADDING_X + photoW, y);
       ctx.scale(-1, 1);
-      ctx.drawImage(photos[i], 0, 0, photoW, photoH);
+      ctx.drawImage(src, sx, sy, sw, sh, 0, 0, photoW, photoH);
       ctx.restore();
     }
 

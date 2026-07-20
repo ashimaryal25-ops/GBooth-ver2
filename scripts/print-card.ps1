@@ -133,46 +133,60 @@ try {
           $topTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $bounds.Width, $halfHeight
           $bottomTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $halfHeight + $VerticalOffset), $bounds.Width, $halfHeight
 
-          # Fit rotated image in top target
-          $scale1 = [Math]::Min($topTarget.Width / $rotatedImage.Width, $topTarget.Height / $rotatedImage.Height)
+          # Fill top half (cover), clipped to the half, so the strip bleeds to
+          # every edge with no white paper and the centre cut stays symmetric.
+          $scale1 = [Math]::Max($topTarget.Width / $rotatedImage.Width, $topTarget.Height / $rotatedImage.Height)
           $w1 = $rotatedImage.Width * $scale1
           $h1 = $rotatedImage.Height * $scale1
           $x1 = $topTarget.X + (($topTarget.Width - $w1) / 2)
           $y1 = $topTarget.Y + (($topTarget.Height - $h1) / 2)
+          $eventArgs.Graphics.SetClip($topTarget)
           $eventArgs.Graphics.DrawImage($rotatedImage, $x1, $y1, $w1, $h1)
+          $eventArgs.Graphics.ResetClip()
 
-          # Fit rotated image in bottom target
-          $scale2 = [Math]::Min($bottomTarget.Width / $rotatedImage.Width, $bottomTarget.Height / $rotatedImage.Height)
+          # Fill bottom half (cover), clipped to the half.
+          $scale2 = [Math]::Max($bottomTarget.Width / $rotatedImage.Width, $bottomTarget.Height / $rotatedImage.Height)
           $w2 = $rotatedImage.Width * $scale2
           $h2 = $rotatedImage.Height * $scale2
           $x2 = $bottomTarget.X + (($bottomTarget.Width - $w2) / 2)
           $y2 = $bottomTarget.Y + (($bottomTarget.Height - $h2) / 2)
+          $eventArgs.Graphics.SetClip($bottomTarget)
           $eventArgs.Graphics.DrawImage($rotatedImage, $x2, $y2, $w2, $h2)
+          $eventArgs.Graphics.ResetClip()
         } finally {
           $rotatedImage.Dispose()
         }
       } else {
-        # Portrait 4x6: Left half and right half strips
+        # Portrait 4x6 cut vertically down the centre into two 2x6 strips.
+        # Each half is FILLED (cover), not fitted, so the strip background bleeds
+        # to every paper edge (no white margins), and clipped to its own half so
+        # it never paints into the neighbouring strip. Centring each strip inside
+        # its half keeps the photos symmetric, so the centre cut produces two
+        # strips with equal borders on both sides.
         $halfWidth = $bounds.Width / 2
-        
+
         $leftTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
         $rightTarget = New-Object System.Drawing.RectangleF ($bounds.X + $halfWidth + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
 
-        # Fit image in left target
-        $scale1 = [Math]::Min($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
+        # Fill left half (cover), clipped to the half.
+        $scale1 = [Math]::Max($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
         $w1 = $image.Width * $scale1
         $h1 = $image.Height * $scale1
         $x1 = $leftTarget.X + (($leftTarget.Width - $w1) / 2)
         $y1 = $leftTarget.Y + (($leftTarget.Height - $h1) / 2)
+        $eventArgs.Graphics.SetClip($leftTarget)
         $eventArgs.Graphics.DrawImage($image, $x1, $y1, $w1, $h1)
+        $eventArgs.Graphics.ResetClip()
 
-        # Fit image in right target
-        $scale2 = [Math]::Min($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
+        # Fill right half (cover), clipped to the half.
+        $scale2 = [Math]::Max($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
         $w2 = $image.Width * $scale2
         $h2 = $image.Height * $scale2
         $x2 = $rightTarget.X + (($rightTarget.Width - $w2) / 2)
         $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
+        $eventArgs.Graphics.SetClip($rightTarget)
         $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
+        $eventArgs.Graphics.ResetClip()
       }
     } elseif ($Mode -eq "Fill4x6") {
       # Fill the whole 4x6 page. The card renderer is slightly narrower than

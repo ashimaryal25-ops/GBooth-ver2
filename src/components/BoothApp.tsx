@@ -429,18 +429,50 @@ export function BoothApp() {
         {/* Chloe's loading screen: just the LOADING wordmark + three pulsing
             dots on the orange gradient (replaces the old white skeleton card). */}
         {step === "generating" && (
-          <section className="grid h-full min-h-0 place-items-center">
+          <section className="relative grid h-full min-h-0 place-items-center overflow-hidden">
             <style>{`
               @keyframes cardifyDot {
                 0%, 80%, 100% { transform: scale(0.7); opacity: 0.45; }
                 40%           { transform: scale(1);   opacity: 1; }
               }
+              /* Whole loader drifts off the left edge, then re-enters from the right. */
+              @keyframes cardifyMarquee {
+                from { transform: translateX(calc(50vw + 100%)); }
+                to   { transform: translateX(calc(-50vw - 100%)); }
+              }
+              /* Pac-Man is two stacked quarter-notched circles chomping in opposite
+                 directions; the wrapper is scaleX(-1) so he faces left, chasing the
+                 dots as the marquee travels. */
+              @keyframes cardifyJawTop {
+                from { transform: rotate(38deg); }
+                to   { transform: rotate(-2deg); }
+              }
+              @keyframes cardifyJawBottom {
+                from { transform: rotate(-38deg); }
+                to   { transform: rotate(2deg); }
+              }
+              .cardify-pacman { position: relative; width: 48px; height: 48px; transform: scaleX(-1); }
+              .cardify-pacman .jaw {
+                position: absolute; inset: 0; width: 0; height: 0;
+                border: 24px solid #f2c40d; border-radius: 50%;
+                border-right-color: transparent;
+              }
+              .cardify-pacman .jaw-top    { animation: cardifyJawTop 0.32s linear infinite alternate; }
+              .cardify-pacman .jaw-bottom { animation: cardifyJawBottom 0.32s linear infinite alternate; }
+              .cardify-pacman .eye {
+                position: absolute; top: 9px; left: 22px; width: 6px; height: 6px;
+                border-radius: 50%; background: #111; z-index: 1;
+              }
             `}</style>
-            <div className="flex flex-col items-center gap-7">
-              <h2 className="text-center text-[56px] font-black uppercase leading-none tracking-[6px] text-black">
+            <div
+              className="flex flex-col items-center gap-7"
+              style={{ animation: "cardifyMarquee 7s linear infinite" }}
+              aria-hidden="true"
+            >
+              <h2 className="whitespace-nowrap text-center text-[56px] font-black uppercase leading-none tracking-[6px] text-black">
                 Creating your card
               </h2>
-              <div className="flex items-center gap-3.5" aria-hidden="true">
+              <div className="flex items-center gap-3.5">
                 {[0, 1, 2].map((i) => (
                   <span
                     key={i}
@@ -448,9 +480,14 @@ export function BoothApp() {
                     style={{ animation: `cardifyDot 1.3s ${i * 0.18}s infinite ease-in-out` }}
                   />
                 ))}
+                <span className="ml-4 cardify-pacman">
+                  <span className="jaw jaw-top" />
+                  <span className="jaw jaw-bottom" />
+                  <span className="eye" />
+                </span>
               </div>
-              <p className="sr-only">Making your card. Hold tight.</p>
             </div>
+            <p className="sr-only">Making your card. Hold tight.</p>
           </section>
         )}
 
