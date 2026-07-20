@@ -35,16 +35,36 @@ try {
   $document.OriginAtMargins = $false
   $document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins 0, 0, 0, 0
 
+  # The 2-inch cut is a property of a dedicated DNP queue, not of this script.
+  # Collage sheets only come out pre-cut when the job is sent to that queue, so
+  # every way of missing it is reported loudly here — silently printing an uncut
+  # sheet is what makes this look like a code bug when it is a queue problem.
   if ($PrinterName.Trim().Length -gt 0) {
     $selectedPrinter = $PrinterName
+
     if ($Mode -eq "DoubleStrip4x6") {
-      $stripPrinterName = "$PrinterName-Strips"
+      $stripPrinterName = $env:CARDIFYBOOTH_STRIP_PRINTER_NAME
+      if ([string]::IsNullOrWhiteSpace($stripPrinterName)) {
+        $stripPrinterName = "$PrinterName-Strips"
+      }
+
       if (Get-Printer -Name $stripPrinterName -ErrorAction SilentlyContinue) {
-        Write-Output "Collage mode: Redirecting print job to dedicated strip queue: $stripPrinterName"
+        Write-Output "Collage mode: using strip queue '$stripPrinterName' (this is the queue that cuts)."
         $selectedPrinter = $stripPrinterName
+      } else {
+        Write-Warning "Collage mode: strip queue '$stripPrinterName' NOT FOUND. Printing to '$PrinterName' instead, so THE SHEET WILL NOT BE CUT."
+        Write-Warning "Fix: create a printer queue named '$stripPrinterName' with the DNP 2 inch cut enabled, or set CARDIFYBOOTH_STRIP_PRINTER_NAME to the queue that cuts."
+        Write-Warning "Queues available: $((Get-Printer | Select-Object -ExpandProperty Name) -join ', ')"
       }
     }
+
     $document.PrinterSettings.PrinterName = $selectedPrinter
+  } elseif ($Mode -eq "DoubleStrip4x6") {
+    # The strip-queue lookup above is built from $PrinterName, so with no printer
+    # configured there is nothing to append "-Strips" to and the job goes to the
+    # Windows default queue uncut.
+    Write-Warning "Collage mode: CARDIFYBOOTH_PRINTER_NAME is not set, so the strip queue cannot be found and THE SHEET WILL NOT BE CUT."
+    Write-Warning "Fix: set CARDIFYBOOTH_PRINTER_NAME in .env.local to the DNP printer name."
   }
 
   if (-not $document.PrinterSettings.IsValid) {
@@ -158,35 +178,47 @@ try {
         }
       } else {
         # Portrait 4x6 cut vertically down the centre into two 2x6 strips.
-        # Each half is FILLED (cover), not fitted, so the strip background bleeds
-        # to every paper edge (no white margins), and clipped to its own half so
-        # it never paints into the neighbouring strip. Centring each strip inside
-        # its half keeps the photos symmetric, so the centre cut produces two
-        # strips with equal borders on both sides.
         $halfWidth = $bounds.Width / 2
+        $imageAspect = $image.Width / $image.Height
+        $halfAspect = $halfWidth / $bounds.Height  # ~0.333 for 4x6
 
-        $leftTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
-        $rightTarget = New-Object System.Drawing.RectangleF ($bounds.X + $halfWidth + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
+        if ($imageAspect -gt ($halfAspect * 1.5)) {
+          # The image is already composed with two strips at ~4:6 ratio
+          # (the client handled gutter math). Just fill the whole page.
+          $scale = [Math]::Max($bounds.Width / $image.Width, $bounds.Height / $image.Height)
+          $w = $image.Width * $scale
+          $h = $image.Height * $scale
+          $x = $bounds.X + (($bounds.Width - $w) / 2) + $HorizontalOffset
+          $y = $bounds.Y + (($bounds.Height - $h) / 2) + $VerticalOffset
+          $eventArgs.Graphics.SetClip($bounds)
+          $eventArgs.Graphics.DrawImage($image, $x, $y, $w, $h)
+          $eventArgs.Graphics.ResetClip()
+        } else {
+          # Single strip — duplicate into left and right halves, filled (cover)
+          # and clipped so neither bleeds into the other.
+          $leftTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
+          $rightTarget = New-Object System.Drawing.RectangleF ($bounds.X + $halfWidth + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
 
-        # Fill left half (cover), clipped to the half.
-        $scale1 = [Math]::Max($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
-        $w1 = $image.Width * $scale1
-        $h1 = $image.Height * $scale1
-        $x1 = $leftTarget.X + (($leftTarget.Width - $w1) / 2)
-        $y1 = $leftTarget.Y + (($leftTarget.Height - $h1) / 2)
-        $eventArgs.Graphics.SetClip($leftTarget)
-        $eventArgs.Graphics.DrawImage($image, $x1, $y1, $w1, $h1)
-        $eventArgs.Graphics.ResetClip()
+          # Fill left half (cover), clipped to the half.
+          $scale1 = [Math]::Max($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
+          $w1 = $image.Width * $scale1
+          $h1 = $image.Height * $scale1
+          $x1 = $leftTarget.X + (($leftTarget.Width - $w1) / 2)
+          $y1 = $leftTarget.Y + (($leftTarget.Height - $h1) / 2)
+          $eventArgs.Graphics.SetClip($leftTarget)
+          $eventArgs.Graphics.DrawImage($image, $x1, $y1, $w1, $h1)
+          $eventArgs.Graphics.ResetClip()
 
-        # Fill right half (cover), clipped to the half.
-        $scale2 = [Math]::Max($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
-        $w2 = $image.Width * $scale2
-        $h2 = $image.Height * $scale2
-        $x2 = $rightTarget.X + (($rightTarget.Width - $w2) / 2)
-        $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
-        $eventArgs.Graphics.SetClip($rightTarget)
-        $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
-        $eventArgs.Graphics.ResetClip()
+          # Fill right half (cover), clipped to the half.
+          $scale2 = [Math]::Max($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
+          $w2 = $image.Width * $scale2
+          $h2 = $image.Height * $scale2
+          $x2 = $rightTarget.X + (($rightTarget.Width - $w2) / 2)
+          $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
+          $eventArgs.Graphics.SetClip($rightTarget)
+          $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
+          $eventArgs.Graphics.ResetClip()
+        }
       }
     } elseif ($Mode -eq "Fill4x6") {
       # Fill the whole 4x6 page. The card renderer is slightly narrower than

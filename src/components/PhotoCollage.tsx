@@ -117,12 +117,14 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
   const [secondsRemaining, setSecondsRemaining] = useState(30);
   const [paletteDrag, setPaletteDrag] = useState<PaletteDrag | null>(null);
   const [brandReady, setBrandReady] = useState(false);
+  const [stripQrReady, setStripQrReady] = useState(false);
 
   const lastRelayIdRef = useRef(0);
   const captureResolversRef = useRef(new Map<string, (photo: string | null) => void>());
   const photosRef = useRef<HTMLCanvasElement[]>([]);
   const decorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const brandImgRef = useRef<HTMLImageElement | null>(null);
+  const stripQrImgRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null);
   const paletteDragRef = useRef<PaletteDrag | null>(null);
 
@@ -148,6 +150,22 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       setBrandReady(true);
     };
     img.src = "/cardify/icl-logo.png";
+
+    // Static QR code pointing to the ICL website
+    QRCode.toDataURL("https://icl.sites.gettysburg.edu/", {
+      margin: 1,
+      width: 150,
+      color: { dark: "#000000", light: "#ffffff" },
+    })
+      .then((url) => {
+        const qrImg = new Image();
+        qrImg.onload = () => {
+          stripQrImgRef.current = qrImg;
+          setStripQrReady(true);
+        };
+        qrImg.src = url;
+      })
+      .catch(() => {});
   }, []);
 
   // --- Camera relay ---------------------------------------------------------
@@ -378,9 +396,15 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       const brandSize = 62;
       const brandX = STRIP_W - STRIP_PADDING_X - brandSize;
       const brandY = STRIP_H - 82;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(brandX - 3, brandY - 3, brandSize + 6, brandSize + 6);
       ctx.drawImage(brandImg, brandX, brandY, brandSize, brandSize);
+    }
+
+    const stripQrImg = stripQrReady ? stripQrImgRef.current : null;
+    if (stripQrImg) {
+      const qrSize = 62;
+      const qrX = STRIP_PADDING_X;
+      const qrY = STRIP_H - 82;
+      ctx.drawImage(stripQrImg, qrX, qrY, qrSize, qrSize);
     }
 
     ctx.save();
@@ -391,7 +415,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
       ctx.fillText(s.emoji, s.x, s.y);
     });
     ctx.restore();
-  }, [bgColor, filter, stickers, brandReady]);
+  }, [bgColor, filter, stickers, brandReady, stripQrReady]);
 
   useEffect(() => {
     if (view === "decor") renderStrip();
@@ -544,15 +568,68 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     }
   };
 
+  /**
+   * Compose a full 4×6 sheet with two identical strips side-by-side.
+   *
+   * Gutter math:
+   *   outer margin = G/2,  center gutter = G
+   *   Total = G/2 + stripFitW + G + stripFitW + G/2 = 2·stripFitW + 2·G
+   *
+   * After the printer cuts down the exact centre, each strip ends up with G/2
+   * of background colour on both its left and right edges — perfectly equal.
+   */
+  const composeForPrint = useCallback(() => {
+    const stripCanvas = decorCanvasRef.current;
+    if (!stripCanvas) return null;
+
+    // 4:6 portrait sheet, height matches the strip so no vertical scaling.
+    const sheetH = STRIP_H;                           // 960
+    const sheetW = Math.round(sheetH * (4 / 6));      // 640
+
+    const G = 24; // center gutter in canvas pixels
+    const outerMargin = G / 2;
+    const stripSlotW = (sheetW - 2 * G) / 2;          // 296
+
+    // Fit the strip into its slot (preserve aspect ratio).
+    const scale = Math.min(stripSlotW / STRIP_W, sheetH / STRIP_H);
+    const drawW = STRIP_W * scale;
+    const drawH = STRIP_H * scale;
+    const yOff = (sheetH - drawH) / 2;
+
+    const sheet = document.createElement("canvas");
+    sheet.width = sheetW;
+    sheet.height = sheetH;
+    const ctx = sheet.getContext("2d");
+    if (!ctx) return null;
+
+    // Fill the entire sheet with the strip background so there is no white
+    // paper anywhere — the coloured border bleeds to every edge.
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, sheetW, sheetH);
+
+    // Left strip
+    const leftX = outerMargin + (stripSlotW - drawW) / 2;
+    ctx.drawImage(stripCanvas, leftX, yOff, drawW, drawH);
+
+    // Right strip (identical)
+    const rightX = outerMargin + stripSlotW + G + (stripSlotW - drawW) / 2;
+    ctx.drawImage(stripCanvas, rightX, yOff, drawW, drawH);
+
+    return sheet.toDataURL("image/png");
+  }, [bgColor]);
+
   const handlePrint = async () => {
     if (!stripDataUrl) return;
     setPrintState("printing");
     setPrintError(null);
     try {
+      // Compose the full 4×6 sheet with two strips and proper gutter math.
+      const printDataUrl = composeForPrint() ?? stripDataUrl;
+
       const res = await fetch("/api/collage/print", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageDataUrl: stripDataUrl }),
+        body: JSON.stringify({ imageDataUrl: printDataUrl }),
       });
       const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -744,7 +821,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
       {/* ================= DECORATE ================= */}
       {view === "decor" && (
-        <section className="flex h-full w-full items-center justify-center overflow-y-auto px-6 py-4">
+        <section className="flex h-full w-full items-center justify-center overflow-hidden px-6 py-4">
           <button
             type="button"
             className={backBtn}
