@@ -101,15 +101,64 @@ directions inside a `scaleX(-1)` wrapper.
 
 No dependency changes. No new packages. No new environment variables.
 
+## Offline phone downloads (new, needs setup on the booth)
+
+The booth can now serve downloads off **its own Wi-Fi hotspot** instead of
+uploading to a public URL. Guests' photos never leave the booth machine. This
+exists because the booth is used by minors and the previous mode put their
+photos on publicly readable URLs.
+
+The final screens now show two numbered QR codes: **1. Join booth Wi-Fi** and
+**2. Scan to download**. A phone camera can only act on one QR at a time, so
+joining and downloading cannot be a single code. The network name is printed
+under the first QR for phones that will not act on a Wi-Fi QR.
+
+New files:
+
+- `src/app/api/local-downloads/[id]/route.ts` — serves the PNG off local disk
+- `src/lib/hotspot.ts` — builds the `WIFI:` join payload
+- `src/components/PhoneDownloadSteps.tsx` — the shared two-step panel
+
+Modified: `src/app/api/public-downloads/route.ts` (mode branch, plus retention
+is now a 30-minute expiry rather than "newest 100"), `src/components/CardReveal.tsx`,
+`src/components/PhotoCollage.tsx`, `.env.example`.
+
+Files are written to `.booth-storage/public-downloads/` and deleted after 30
+minutes. Nothing else in the app reads these URLs, so expiry breaks nothing.
+
+### Booth setup for this mode
+
+1. Turn on Windows Mobile Hotspot. Give it internet from **ethernet** if
+   possible — a hotspot with no internet makes phones warn "no internet" and
+   jump back to cellular mid-download.
+2. Add a Windows Firewall inbound rule allowing the app's port (3000) on the
+   **private** network. Without it phones hang with no error. This is the most
+   likely cause of "the QR does nothing".
+3. Set in `.env.local`:
+
+```env
+CARDIFYBOOTH_LOCAL_DOWNLOAD_BASE_URL=auto
+NEXT_PUBLIC_CARDIFYBOOTH_HOTSPOT_SSID=<the hotspot name Windows shows>
+NEXT_PUBLIC_CARDIFYBOOTH_HOTSPOT_PASSWORD=<the hotspot password>
+```
+
+   `auto` prefers `192.168.137.1` (the Windows hotspot address). If it picks
+   the wrong interface, set the full URL explicitly instead.
+
+4. Local mode wins when `BLOB_READ_WRITE_TOKEN` is also present. To go back to
+   public URLs, blank `CARDIFYBOOTH_LOCAL_DOWNLOAD_BASE_URL`. With neither set
+   the kiosk shows "QR unavailable" and everything else still works.
+
+Verified on the laptop: upload returns a LAN URL, fetching it returns HTTP 200
+with `image/png` and an attachment header, and the id is path-traversal guarded.
+**Not** verified: an actual phone over an actual hotspot. That is the real test.
+
 ## Explicitly not included in this update
 
 Do not carry these into the booth from this laptop:
 
-- `src/app/api/public-downloads/route.ts` — retention was changed locally from
-  "newest 100" to a 30-minute expiry with a 50-file cap. Held back because the
-  whole phone-download approach is under review (guests may include minors, and
-  the images currently sit on public URLs). Decide the hosting question first.
 - `public/ghost-runner/leaderboard.json` — local play data, not a code change.
+- `.env.local` — booth-specific. Never copy the laptop's version over.
 
 `public/collage/script.js` and `public/collage/style.css` had also been edited on
 the laptop, but that is the **legacy standalone collage page and nothing loads

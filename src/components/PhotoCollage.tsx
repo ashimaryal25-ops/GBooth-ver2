@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { uploadPublicPng } from "@/lib/public-download";
+import { PhoneDownloadSteps } from "@/components/PhoneDownloadSteps";
 
 type CollageView = "layout" | "camera" | "decor" | "final";
 type FilterName = "none" | "traditional" | "sepia" | "soft" | "y2k" | "vivid";
@@ -920,39 +921,17 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
           <div className="flex w-full flex-1 items-center justify-between px-[8vw]">
             {/* LEFT: QR */}
             <div className="flex w-[300px] flex-col items-center justify-center">
-              <div className="flex h-[250px] w-[250px] items-center justify-center bg-[#8bbceb] shadow-[0_10px_20px_rgba(0,0,0,0.15)]">
-                <div className="flex h-[180px] w-[180px] items-center justify-center bg-white p-2.5">
-                  {qrDataUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={qrDataUrl}
-                      alt="QR code to download your photo strip"
-                      className="h-full w-full"
-                    />
-                  ) : downloadState === "error" ? (
-                    <p className="px-3 text-center text-sm font-black text-[#9f2d20]">
-                      QR unavailable
-                    </p>
-                  ) : (
-                    <div className="flex flex-col items-center gap-3 text-[#043371]">
-                      <span className="h-8 w-8 animate-spin rounded-full border-4 border-[#c8d5e6] border-t-[#043371]" />
-                      <span className="text-[11px] font-black uppercase tracking-[1px]">
-                        Preparing
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <h3 className="mt-6 text-center font-['Arial_Black',Arial,sans-serif] text-[20px] uppercase text-black">
+              <h3 className="mb-3 text-center font-['Arial_Black',Arial,sans-serif] text-[20px] uppercase text-black">
                 Download your strip
               </h3>
-              <p className="mt-2 max-w-[270px] text-center text-sm font-bold text-black/65" aria-live="polite">
-                {downloadState === "ready"
-                  ? "Scan with your phone camera and save the PNG."
-                  : downloadState === "error"
-                    ? (downloadError ?? "Phone download is unavailable.")
-                    : "Creating your phone download..."}
-              </p>
+              <div className="flex items-center justify-center bg-[#8bbceb] px-5 py-4 shadow-[0_10px_20px_rgba(0,0,0,0.15)]">
+                <PhoneDownloadSteps
+                  downloadQr={qrDataUrl || null}
+                  status={downloadState}
+                  errorMessage={downloadError}
+                  accent="#043371"
+                />
+              </div>
             </div>
 
             {/* CENTER: strip */}

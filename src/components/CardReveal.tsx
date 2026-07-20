@@ -8,6 +8,7 @@ import type { CardIdentity } from "@/lib/card-schema";
 import { downloadPng, makeCardFilename, renderCardAsPng } from "@/lib/export-card";
 import { printLocalCard } from "@/lib/print-local-card";
 import { uploadPublicPng } from "@/lib/public-download";
+import { PhoneDownloadSteps } from "@/components/PhoneDownloadSteps";
 import { saveLocalCardPrint } from "@/lib/save-local-card";
 
 interface CardRevealProps {
@@ -154,38 +155,14 @@ export function CardReveal({
         <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-[#043371] text-white">
           <Smartphone size={21} aria-hidden="true" />
         </div>
-        <h2 className="text-xl font-black text-[#171717]">Get it on your phone</h2>
-        <p className="mt-1 max-w-[220px] text-sm font-semibold text-[#5b5b5b]">
-          Scan to download the finished card.
-        </p>
+        <h2 className="mb-3 text-xl font-black text-[#171717]">Get it on your phone</h2>
 
-        <div className="mt-4 grid h-[172px] w-[172px] place-items-center border-2 border-[#043371] bg-white p-2">
-          {downloadQr ? (
-            // eslint-disable-next-line @next/next/no-img-element -- Generated QR data URL.
-            <img
-              src={downloadQr}
-              alt="QR code to download this card"
-              className="h-full w-full"
-            />
-          ) : downloadStatus === "error" ? (
-            <p className="px-3 text-sm font-bold text-[#9f2d20]">QR unavailable</p>
-          ) : (
-            <div className="flex flex-col items-center gap-3 text-[#043371]">
-              <span className="h-7 w-7 animate-spin rounded-full border-4 border-[#c8d5e6] border-t-[#043371]" />
-              <span className="text-xs font-black uppercase tracking-[0.12em]">
-                Preparing
-              </span>
-            </div>
-          )}
-        </div>
-
-        <p className="mt-3 min-h-10 max-w-[220px] text-xs font-semibold text-[#666]" aria-live="polite">
-          {downloadStatus === "ready"
-            ? "Open your camera, scan, and save the PNG."
-            : downloadStatus === "error"
-              ? (downloadError ?? "Phone download is unavailable.")
-              : "Creating a secure public download link..."}
-        </p>
+        <PhoneDownloadSteps
+          downloadQr={downloadQr}
+          status={downloadStatus}
+          errorMessage={downloadError}
+          accent="#043371"
+        />
       </div>
 
       <div className="flex w-full flex-col items-center gap-5 xl:items-start">
