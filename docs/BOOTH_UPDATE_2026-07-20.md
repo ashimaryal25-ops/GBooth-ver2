@@ -3,18 +3,26 @@
 Handoff record for the laptop changes made after commit `82264cc`. Written to be
 specific enough that the booth computer does not need to infer anything.
 
-Three unrelated fixes: collage print geometry, collage photo proportions, and the
-card loading screen. Phone-download / QR work is deliberately **excluded** from
-this update — see "Explicitly not included" at the bottom.
+Two parts:
+
+1. Three print/UI fixes — collage print geometry, collage photo proportions, and
+   the card loading screen.
+2. A new **offline phone-download mode**, where the booth serves guests' photos
+   off its own Wi-Fi hotspot instead of a public URL, plus a guard that keeps
+   guests off the rest of the app. This one needs setup on the booth.
 
 ---
 
 ## Task for the agent on the booth computer
 
-Apply the update commit titled **"fix: collage print bleed, 4-shot proportions,
-card loader"** — the newest commit on `origin/main` — to this booth checkout,
-then verify it. (Referenced by title rather than hash because this note is part
-of that same commit.)
+Apply the three commits on `origin/main` after `82264cc` to this booth checkout,
+then verify. Newest last:
+
+- `fix: collage print bleed, 4-shot proportions, card loader`
+- `feat: serve phone downloads from the booth hotspot`
+- `feat: keep guests off the kiosk when serving on the LAN`
+
+(Referenced by title rather than hash because this note is part of the first.)
 
 Do this:
 
@@ -23,29 +31,47 @@ Do this:
    may live here.
 2. Confirm `.env.local` and `.booth-storage/` are intact before and after. Never
    overwrite or delete either; `.booth-storage` holds guests' local card PNGs and
-   the SQLite database.
-3. Fetch and apply that commit. It touches exactly four files:
-   `scripts/print-card.ps1`, `src/components/PhotoCollage.tsx`,
-   `src/components/BoothApp.tsx`, `docs/BOOTH_UPDATE_2026-07-20.md`.
-   Resolve only genuine conflicts. If a diff shows changes to
-   `public/collage/script.js` or `public/collage/style.css`, that is dead legacy
-   code — discard those, do not merge them.
-4. Run `npm run build`. Do **not** run `npm install` — this update adds no
-   dependencies and no environment variables.
-5. Restart the kiosk app.
-6. Work through "Booth smoke test" below and report the result of each item.
+   the SQLite database, and `.env.local` holds this booth's own settings.
+3. Fetch and apply all three. Resolve only genuine conflicts. If a diff shows
+   changes to `public/collage/script.js` or `public/collage/style.css`, that is
+   dead legacy code — discard those, do not merge them.
+4. Add the new settings to `.env.local` for hotspot download mode — see "Booth
+   setup for this mode" below. **Skip this and the QR will not work**, though
+   the rest of the booth still will.
+5. Run `npm run build`. Do **not** run `npm install` — no dependencies changed.
+6. Restart the kiosk app.
+7. Work through "Booth smoke test" below and report the result of each item.
 
-Two of the fixes cannot be verified from code alone — they need real paper and a
-real capture session. Smoke-test items 1 to 3 are the actual proof. Item 2 in
-particular requires physically cutting a printed sheet.
+### Things that will look like bugs but are not
 
-Expect one deliberate visual change on the print: filling the page crops about
-5% off each strip's outer edge and prints the strip roughly 12% larger. Photos
-are not cut. This is intended, not a regression — see "Printing" below.
+- **The print is tighter and slightly larger.** Filling the page crops about 5%
+  off each strip's outer edge and prints it roughly 12% larger. Photos are not
+  cut. Intended — see "Printing".
+- **Two QR codes now appear** on the card and collage final screens: join the
+  Wi-Fi, then download. A phone camera can only act on one code at a time, so
+  they cannot be combined. The join QR disappears if no hotspot is configured.
+- **The app refuses to load from another device.** That is `src/proxy.ts` doing
+  its job. The booth's own two screens use `localhost` and are unaffected.
 
-If the print comes out misaligned rather than merely tighter, do not edit the
-script. Adjust the `CARDIFYBOOTH_COLLAGE_OFFSET_X` / `..._OFFSET_Y` environment
-variables, which `print-card.ps1` already reads.
+### Do not "fix" these
+
+- `src/proxy.ts` uses the **`proxy.ts`** convention, not `middleware.ts`, which
+  is deprecated in Next 16 and **silently ignored** — it looks like it works and
+  does nothing.
+- It reads the **Host header**, not `request.nextUrl.hostname`. Next normalises
+  `nextUrl` to the server's own origin, so it reports `localhost` even for LAN
+  requests and would let everything through.
+
+### If something is wrong
+
+- Print misaligned rather than merely tighter → do not edit the script. Adjust
+  `CARDIFYBOOTH_COLLAGE_OFFSET_X` / `..._OFFSET_Y`, which `print-card.ps1`
+  already reads.
+- Phone scans the download QR and nothing happens, or it hangs → almost always
+  the **Windows Firewall** inbound rule for the app's port on the private
+  network. Check that before touching code.
+- Need to fall back to public URLs → blank `CARDIFYBOOTH_LOCAL_DOWNLOAD_BASE_URL`
+  and keep `BLOB_READ_WRITE_TOKEN` set.
 
 ---
 
@@ -212,7 +238,10 @@ genuine conflicts.
 
 ## Booth smoke test
 
-Items 1 and 2 are the ones that can only be judged on real paper.
+Nothing below was provable on the laptop. Items 1-2 need real paper, 3-4 need a
+real capture, and 7-10 need a real phone on the real hotspot.
+
+**Print and capture**
 
 1. Print a 4-shot collage. Confirm the colour reaches all four paper edges with
    no white margin.
@@ -221,11 +250,29 @@ Items 1 and 2 are the ones that can only be judged on real paper.
 3. Run a 4-shot session and confirm the photos look correctly proportioned, not
    vertically squashed.
 4. Run 2-shot and 3-shot sessions and confirm they are unchanged.
-5. Start a trading card and confirm Pac-Man chases the dots across the loading
-   screen and loops.
-6. Print a trading card and confirm the 4x6 fill behaviour is unchanged by the
-   print-script edit.
-7. Confirm `.booth-storage` still contains local card PNGs and SQLite data.
+5. Start a trading card and confirm Pac-Man chases the dots and loops.
+6. Print a trading card and confirm 4x6 fill is unchanged by the script edit.
+
+**Phone downloads over the hotspot**
+
+7. On the final screen, confirm two QR codes appear and the network name printed
+   under the first matches the hotspot Windows is broadcasting.
+8. Scan QR 1 with a phone and confirm it joins the booth Wi-Fi.
+9. Scan QR 2 and confirm the PNG downloads and opens. Do this for **both** a
+   collage and a trading card.
+10. Wait 30+ minutes, scan an old QR again, and confirm it now fails — downloads
+    are meant to expire so guests' photos do not linger.
+
+**Guests must not reach the booth**
+
+11. From the same phone, open `http://<booth-ip>:3000/` and confirm it is
+    refused. Try `/api/local-cards` too — it must not list anyone's photos.
+12. Confirm the booth's own two screens still work normally on `localhost`,
+    including the camera mirror.
+
+**Data**
+
+13. Confirm `.booth-storage` still contains local card PNGs and SQLite data.
 
 ## Verified on the laptop
 
