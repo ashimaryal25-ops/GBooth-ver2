@@ -113,11 +113,39 @@ The final screens now show two numbered QR codes: **1. Join booth Wi-Fi** and
 joining and downloading cannot be a single code. The network name is printed
 under the first QR for phones that will not act on a Wi-Fi QR.
 
+### Guests must not reach the rest of the app
+
+Listening on the LAN also exposes the kiosk to everyone on the hotspot. Without
+a guard they could drive the booth UI, trigger prints and burn dye-sub media, or
+read `/api/local-cards` and page through **other guests' photos**.
+
+`src/proxy.ts` blocks this: requests arriving on a LAN address may only reach
+`/api/local-downloads`. Everything else returns 403. The booth's own two screens
+use `localhost` and are unaffected, so the camera mirror keeps working.
+
+Verified on the laptop, 9/9: localhost reaches the kiosk, its APIs and the
+mirror page; a LAN address is refused the app root, `/api/local-cards`,
+`/api/collage/print`, `/camera-mirror.html` and `/api/mirror`, while the
+download route stays reachable.
+
+Two notes for whoever maintains this:
+
+- It uses the **`proxy.ts`** convention. `middleware.ts` is deprecated in Next 16
+  and is silently ignored — an earlier attempt using it did nothing at all.
+- It reads the **Host header**, not `request.nextUrl.hostname`. Next normalises
+  `nextUrl` to the server's own origin, so it reports `localhost` even for LAN
+  requests and would let everything through. Do not "simplify" it back.
+
+Because it keys off the Host header it stops guests browsing from a phone, not
+someone crafting requests by hand. It is a booth-privacy measure, not a hardened
+boundary — do not put anything on this machine that would be damaging to leak.
+
 New files:
 
 - `src/app/api/local-downloads/[id]/route.ts` — serves the PNG off local disk
 - `src/lib/hotspot.ts` — builds the `WIFI:` join payload
 - `src/components/PhoneDownloadSteps.tsx` — the shared two-step panel
+- `src/proxy.ts` — keeps guests off the rest of the app
 
 Modified: `src/app/api/public-downloads/route.ts` (mode branch, plus retention
 is now a 30-minute expiry rather than "newest 100"), `src/components/CardReveal.tsx`,
