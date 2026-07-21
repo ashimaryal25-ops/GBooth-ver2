@@ -5,10 +5,19 @@ PC in a **fresh folder**, and get the **photo-collage print to cut a 4×6 into t
 clean 2×6 strips**. The booth's existing install is broken (it does not cut); do
 not try to repair it — stand this version up beside it and switch over.
 
-This branch (`booth-deploy-2026-07-21`) is an exact snapshot of the laptop's
-working tree. Clone it, don't hand-copy files.
+This repo's `main` is an exact snapshot of the laptop's working tree. Clone it,
+don't hand-copy files.
 
-Repo: `https://github.com/ashimaryal25-ops/GBooth-ver2.git`
+Repo: `https://github.com/ashimaryal25-ops/gbooth_ver3.git` (clone `main`)
+
+**Install Git LFS first.** The Ghost Runner background videos (~69 MB of `.mp4`)
+are stored via Git LFS. Without LFS installed, a clone brings them down as tiny
+pointer files and the game visuals break. Run once, before cloning:
+```powershell
+git lfs install
+```
+(The `.wav`/`.mp3` sounds and `.gif`s are normal git and always clone fine. The
+card/collage printing does not use the videos, so cutting works either way.)
 
 ---
 
@@ -85,10 +94,12 @@ Repeat for 2-, 3-, and 4-shot strips.
 Do all of this in a **new folder** (e.g. `C:\CardifyBooth-v2`). Leave the old
 install untouched.
 
-1. **Clone this branch into the new folder:**
+1. **Clone into the new folder** (Git LFS installed first — see top of this doc):
    ```powershell
-   git clone --branch booth-deploy-2026-07-21 https://github.com/ashimaryal25-ops/GBooth-ver2.git C:\CardifyBooth-v2
+   git lfs install
+   git clone https://github.com/ashimaryal25-ops/gbooth_ver3.git C:\CardifyBooth-v2
    cd C:\CardifyBooth-v2
+   git lfs pull   # ensures the .mp4 videos are real files, not pointers
    ```
 2. **Install deps** (fresh folder, so this is required once):
    ```powershell

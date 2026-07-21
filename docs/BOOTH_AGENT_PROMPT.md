@@ -11,13 +11,15 @@ You are Claude Code running on the Gettysburg College "CardifyBooth" kiosk PC (W
 GOAL
 Stand up the current working CardifyBooth in a NEW folder and get the PHOTO-COLLAGE print to cut a 4×6 sheet into TWO CLEAN 2×6 strips. The booth's existing install is broken (it prints the 4×6 but does not cut it in two). Do NOT repair the old install — deploy this fresh version alongside it and switch over.
 
-FIRST, READ THIS
-Clone the repo, then open and follow docs/BOOTH_TRANSFER_2026-07-21.md. It has the full detail; the summary below is the plan. Also skim docs/BOOTH_UPDATE_STRIP_FIX.md and docs/BOOTH_UPDATE_2026-07-20.md for print-geometry history.
+BE EFFICIENT
+Do NOT explore or read the source code — just run the steps. Only open docs/BOOTH_TRANSFER_2026-07-21.md if a step actually fails. Ask the human for any value you don't have (printer/queue names) instead of hunting for it.
 
 PLAN
-1. Clone into a new folder (do not disturb the old install or its .env.local / .booth-storage):
-     git clone --branch booth-deploy-2026-07-21 https://github.com/ashimaryal25-ops/GBooth-ver2.git C:\CardifyBooth-v2
+1. Clone into a new folder (do not disturb the old install or its .env.local / .booth-storage). Git LFS first, or the .mp4 game videos come down as broken pointers:
+     git lfs install
+     git clone https://github.com/ashimaryal25-ops/gbooth_ver3.git C:\CardifyBooth-v2
      cd C:\CardifyBooth-v2
+     git lfs pull
      npm install
 2. Create .env.local (it is gitignored, NOT in the clone). Reuse the old install's values if sound. It MUST have the printer keys (step 4).
 3. Do NOT set NEXT_PUBLIC_DEV_CAMERA — that is a laptop-only flag that bypasses the camera mirror with a local webcam. The booth must use the mirror.
