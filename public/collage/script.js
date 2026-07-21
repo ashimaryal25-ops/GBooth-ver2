@@ -108,7 +108,7 @@ async function startCameraStream(retries = 3) {
   try {
     if (streamReference) stopCameraStream();
     streamReference = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480 },
+      video: { width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     });
     videoElement.srcObject = streamReference;
@@ -118,7 +118,8 @@ async function startCameraStream(retries = 3) {
       console.warn("Camera busy, retrying in 2s...", err);
       setTimeout(() => startCameraStream(retries - 1), 2000);
     } else {
-      console.error(err);
+      console.error("Camera failed after all retries:", err);
+      alert("Could not access camera: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 }
@@ -461,7 +462,19 @@ function initExportActions() {
     button.innerText = "Printing...";
 
     try {
-      const imgUrl = workspaceCanvas.toDataURL("image/png");
+      const printCanvas = document.createElement("canvas");
+      printCanvas.width = 1200;
+      printCanvas.height = 1800;
+      const pCtx = printCanvas.getContext("2d");
+      
+      pCtx.fillStyle = "#ffffff";
+      pCtx.fillRect(0, 0, 1200, 1800);
+      
+      // Draw each strip to fill its exact 600x1800 half — no white gaps, no crop
+      pCtx.drawImage(workspaceCanvas, 0, 0, 600, 1800);
+      pCtx.drawImage(workspaceCanvas, 600, 0, 600, 1800);
+
+      const imgUrl = printCanvas.toDataURL("image/png");
       const response = await fetch("/api/collage/print", {
         method: "POST",
         headers: {

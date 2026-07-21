@@ -4,6 +4,7 @@
 
 import { Camera, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { captureDevPhoto, isDevCamera } from "@/lib/dev-camera";
 
 interface ImageUploadProps {
   photo: string | null;
@@ -42,6 +43,13 @@ export function ImageUpload({ photo, onUpload, onChooseAnother, onViewSample, sa
 
   const startCamera = useCallback(() => {
     setCameraStatus("starting");
+
+    // Laptop testing: no mirror window to wait on, the stream is already live.
+    if (isDevCamera()) {
+      setCameraStatus("active");
+      return;
+    }
+
     sendToMirror({ type: "mirror-start" });
     sendToMirror({ type: "mirror-ping" });
 
@@ -59,8 +67,22 @@ export function ImageUpload({ photo, onUpload, onChooseAnother, onViewSample, sa
   }, [sendToMirror]);
 
   const capturePhoto = useCallback(() => {
+    if (cameraStatus !== "active") {
+      return;
+    }
+
+    if (isDevCamera()) {
+      const dataUrl = captureDevPhoto();
+      if (dataUrl) {
+        onUpload(dataUrl);
+      } else {
+        setCameraStatus("error");
+      }
+      return;
+    }
+
     const channel = mirrorChannelRef.current;
-    if ((!channel && typeof fetch === "undefined") || cameraStatus !== "active") {
+    if (!channel && typeof fetch === "undefined") {
       return;
     }
 
@@ -73,7 +95,7 @@ export function ImageUpload({ photo, onUpload, onChooseAnother, onViewSample, sa
       captureRequestIdRef.current = null;
       setCameraStatus("error");
     }, 3500);
-  }, [cameraStatus, clearCaptureTimeout, sendToMirror]);
+  }, [cameraStatus, clearCaptureTimeout, onUpload, sendToMirror]);
 
   const handleMirrorMessage = useCallback((data: Record<string, unknown>) => {
     if (data.type === "mirror-ready") {

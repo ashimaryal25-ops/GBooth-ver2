@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Camera, Home, Info, Landmark, Maximize2 } from "lucide-react";
+import { Home, Info } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CardForm } from "@/components/CardForm";
 import { CardPreview } from "@/components/CardPreview";
@@ -9,11 +9,16 @@ import { ImageUpload } from "@/components/ImageUpload";
 import { PhotoCollage } from "@/components/PhotoCollage";
 import type { CardIdentity, CardRequest } from "@/lib/card-schema";
 import { createFallbackCard } from "@/lib/fallback-card";
+import { isDevCamera, startDevCamera, stopDevCamera } from "@/lib/dev-camera";
 import { generateCardIdentity } from "@/lib/generate-card";
 
-// "cardIntro" is Chloe's CARDIFY BOOTH splash (her cardify1 design): the guest
-// taps the Trading Card tile, lands here, and taps START to begin the flow.
-type Step = "choose" | "cardIntro" | "cardSetup" | "generating" | "reveal" | "collage";
+type Step = "choose" | "cardSetup" | "generating" | "reveal" | "collage";
+
+// Two builds of Ghost Runner. The home-screen tile runs the older self-playing
+// attract build (dimmed, with its own START overlay, no camera, no sound); going
+// fullscreen swaps in Raiyat's current game with Level 2, audio and hand tracking.
+const ATTRACT_SRC = "/ghost-runner/attract.html";
+const GAME_SRC = "/ghost-runner/index.html";
 
 const sampleCard = createFallbackCard({
   name: "Your Name",
@@ -40,33 +45,45 @@ export function BoothApp() {
   const [cardId, setCardId] = useState<string | null>(null);
   const [isSampleCardOpen, setIsSampleCardOpen] = useState(false);
   const [isGameFullscreen, setIsGameFullscreen] = useState(false);
-  const [idleTimeout, setIdleTimeout] = useState(120000);
+  const [gameSrc, setGameSrc] = useState(ATTRACT_SRC);
+  const [showIdlePopup, setShowIdlePopup] = useState(false);
   const gamePanelRef = useRef<HTMLDivElement>(null);
   const gameFrameRef = useRef<HTMLIFrameElement>(null);
   // Bumped by children (e.g. the collage taking a shot) to signal "still in use"
   // when there are no pointer/key events because the guest is just posing.
   const [activityNonce, setActivityNonce] = useState(0);
 
+  // 2-minute idle timeout → shows a "Continue session?" popup.
+  // If the user doesn't interact within 30s of the popup, reset to home.
+  // Never fires on "choose" (home) or "generating" since there's nothing to timeout.
   useEffect(() => {
-    if (step === "choose" || step === "generating") return;
+    if (step === "choose" || step === "generating") {
+      setShowIdlePopup(false);
+      return;
+    }
 
-    let timeout: ReturnType<typeof setTimeout>;
-    // The collage takes a while with no taps at all (3s countdown per shot while
-    // the guest poses), so it gets a much longer leash than the tap-driven card
-    // flow. The collage also reports activity of its own via onActivity.
-    const currentTimeout =
-      step === "reveal" ? 30000 : step === "collage" ? 120000 : idleTimeout;
+    let idleTimer: ReturnType<typeof setTimeout>;
+    let popupTimer: ReturnType<typeof setTimeout>;
 
+    const resetToHome = () => {
+      setShowIdlePopup(false);
+      setPhoto(null);
+      setCard(null);
+      setCardId(null);
+      setStep("choose");
+    };
+
+    const showPopup = () => {
+      setShowIdlePopup(true);
+      // 30s to respond or auto-reset
+      popupTimer = setTimeout(() => resetToHome(), 30000);
+    };
 
     const resetTimer = () => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        setPhoto(null);
-        setCard(null);
-        setCardId(null);
-        setIdleTimeout(120000);
-        setStep("choose");
-      }, currentTimeout);
+      setShowIdlePopup(false);
+      clearTimeout(idleTimer);
+      clearTimeout(popupTimer);
+      idleTimer = setTimeout(showPopup, 120000);
     };
 
     const handleActivity = () => resetTimer();
@@ -78,16 +95,47 @@ export function BoothApp() {
     resetTimer();
 
     return () => {
-      clearTimeout(timeout);
+      clearTimeout(idleTimer);
+      clearTimeout(popupTimer);
+      setShowIdlePopup(false);
       window.removeEventListener("pointerdown", handleActivity);
       window.removeEventListener("keydown", handleActivity);
       window.removeEventListener("touchstart", handleActivity);
     };
-  }, [step, idleTimeout, activityNonce]);
+  }, [step, activityNonce]);
+
+  // Laptop testing only. On the kiosk the mirror window owns the camera and this
+  // never runs, so the card and collage keep talking to the mirror as before.
+  // Ghost Runner picks the stream up off window.__boothCamera instead of opening
+  // a second one.
+  useEffect(() => {
+    if (!isDevCamera()) return;
+    let cancelled = false;
+
+    void startDevCamera().catch((error: unknown) => {
+      if (cancelled) return;
+      const name = error instanceof Error ? error.name : "unknown";
+      const message = error instanceof Error ? error.message : String(error);
+      // Surfaced loudly because a silent failure here looks identical to a
+      // black camera, and OverconstrainedError/NotAllowedError need different fixes.
+      console.error(`[dev-camera] ${name}: ${message}`);
+    });
+
+    return () => {
+      cancelled = true;
+      stopDevCamera();
+    };
+  }, []);
 
   useEffect(() => {
+    // Single exit path for every way out of the game (Home button, Esc key, kiosk
+    // policy): drop back to the attract build, which reloads clean and silent.
     const handleFullscreenChange = () => {
-      setIsGameFullscreen(document.fullscreenElement === gamePanelRef.current);
+      const isFullscreen = document.fullscreenElement === gamePanelRef.current;
+      setIsGameFullscreen(isFullscreen);
+      if (!isFullscreen) {
+        setGameSrc(ATTRACT_SRC);
+      }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -111,7 +159,7 @@ export function BoothApp() {
 
     const resetTimer = () => {
       clearTimeout(timeout);
-      timeout = setTimeout(() => void returnToHome(), 30000);
+      timeout = setTimeout(() => void returnToHome(), 120000);
     };
 
     const handleGameActivity = (event: MessageEvent) => {
@@ -143,6 +191,9 @@ export function BoothApp() {
         await document.exitFullscreen();
         return;
       }
+      // Swap to the real game first, then go fullscreen. requestFullscreen must
+      // still be called in this same click stack or the browser rejects it.
+      setGameSrc(GAME_SRC);
       await gamePanelRef.current?.requestFullscreen();
     } catch {
       // Fullscreen can be blocked by browser or kiosk policy; the embedded
@@ -175,7 +226,6 @@ export function BoothApp() {
     setCard(null);
     setCardId(null);
     setIsSampleCardOpen(false);
-    setIdleTimeout(120000);
   }, []);
 
   const handleGenerate = useCallback(
@@ -203,11 +253,9 @@ export function BoothApp() {
   return (
     <main
       className={
-        step === "choose" || step === "cardIntro"
+        step === "choose" || step === "collage"
           ? "relative h-dvh w-full overflow-hidden text-[var(--gc-black)]"
-          : step === "collage"
-            ? "min-h-screen overflow-y-auto bg-transparent px-4 py-2 text-[var(--gc-black)] sm:px-6 lg:h-dvh lg:overflow-hidden lg:px-8"
-            : "min-h-screen overflow-y-auto px-5 py-4 text-[var(--gc-black)] sm:px-8 lg:h-dvh lg:overflow-hidden"
+          : "min-h-screen overflow-y-auto px-5 py-4 text-[var(--gc-black)] sm:px-8 lg:h-dvh lg:overflow-hidden"
       }
       // Chloe's orange gradient backs the whole trading-card flow. The collage
       // keeps her sky-blue and the 4-quadrant home keeps its cream look.
@@ -223,83 +271,97 @@ export function BoothApp() {
     >
       <div
         className={
-          step === "choose" || step === "cardIntro"
+          step === "choose" || step === "collage"
             ? "relative z-10 h-full w-full"
-            : step === "collage"
-              ? "relative z-10 mx-auto flex h-full max-w-[1440px] flex-col"
-              : "relative z-10 mx-auto h-full max-w-[1440px]"
+            : "relative z-10 mx-auto h-full max-w-[1440px]"
         }
       >
-        {step === "collage" && (
-          <header className="mx-auto mb-1.5 flex max-w-md shrink-0 flex-col items-center gap-1 rounded-[8px] border border-[#d7c9bb]/50 bg-[#fffdf9]/80 px-5 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.1)] backdrop-blur-md">
-            <h1 className="text-xl font-black tracking-normal text-[var(--gc-black)]">CardifyBooth</h1>
-          </header>
-        )}
-
         {step === "choose" && (
           <section className="grid h-full w-full grid-cols-2 grid-rows-2">
-            {/* Quarter 1 — Trading Card */}
+            {/* Quarter 1 — Trading Card (Chloe's gold-card art, jumps straight to the form).
+                bg-contain so the tilted cards are never corner-cropped; the side bars are
+                filled with a matching orange gradient so they blend with the artwork. */}
             <button
               type="button"
-              onClick={() => setStep("cardIntro")}
-              className="group flex flex-col items-start justify-between overflow-hidden bg-[var(--gc-orange)] p-8 text-left text-white transition-all hover:brightness-110 active:brightness-95"
+              onClick={() => setStep("cardSetup")}
+              className="group relative flex items-center justify-center overflow-hidden bg-cover bg-center bg-no-repeat transition-all hover:brightness-105 active:brightness-95"
+              style={{
+                backgroundImage: "url('/cardify/home-bg.png')",
+              }}
             >
-              <Camera size={52} strokeWidth={2.2} />
-              <span>
-                <span className="flex items-center gap-3 text-4xl font-black tracking-wide">
-                  Trading Card
-                  <ArrowRight size={32} className="transition-transform group-hover:translate-x-1" />
+              <span className="relative z-10 mx-auto -mt-6 max-w-[300px] rounded-2xl px-8 py-10 text-center"
+                style={{
+                  backgroundColor: "rgba(230,168,55,0.94)",
+                  backdropFilter: "blur(18px)",
+                  WebkitBackdropFilter: "blur(18px)",
+                }}
+              >
+                <span className="block text-[36px] font-black uppercase leading-[0.9] tracking-tight text-[var(--gc-black)] drop-shadow-[0_2px_10px_rgba(255,244,222,0.85)]">
+                  Trading
+                  <br />
+                  Card
                 </span>
-                <span className="mt-1.5 block text-lg font-semibold text-white/85">Take a portrait &amp; create a personalized card</span>
+                <span className="mt-3 block text-sm font-black uppercase tracking-[0.2em] text-[var(--gc-black)]/70 drop-shadow-[0_1px_6px_rgba(255,244,222,0.8)]">
+                  Gettysburg themed
+                </span>
+              </span>
+
+              <span className="absolute top-8 left-1/2 z-10 -translate-x-1/2 font-serif text-2xl text-[var(--gc-black)]/85 drop-shadow-[0_1px_8px_rgba(255,244,222,0.9)] transition-transform group-hover:scale-105">
+                Tap to start
               </span>
             </button>
 
-            {/* Quarter 2 — Photo Collage */}
+            {/* Quarter 2 — Photo Collage: the collage-strip mockup shown whole on a
+                navy that matches the image's own background, so it reads seamlessly. */}
             <button
               type="button"
               onClick={() => setStep("collage")}
-              className="group flex flex-col items-start justify-between overflow-hidden bg-[var(--gc-blue)] p-8 text-left text-white transition-all hover:brightness-110 active:brightness-95"
-            >
-              <Landmark size={52} strokeWidth={2.2} />
-              <span>
-                <span className="flex items-center gap-3 text-4xl font-black tracking-wide">
-                  Photo Collage
-                  <ArrowRight size={32} className="transition-transform group-hover:translate-x-1" />
-                </span>
-                <span className="mt-1.5 block text-lg font-semibold text-white/85">Build a multi-photo keepsake print</span>
-              </span>
-            </button>
+              aria-label="Photo Collage — build a keepsake photo strip"
+              className="group overflow-hidden bg-contain bg-center bg-no-repeat transition-all hover:brightness-110 active:brightness-95"
+              style={{ backgroundColor: "#05225a", backgroundImage: "url('/cardify/collage-tile.png')" }}
+            />
 
             {/* Quarter 3 — Ghost Runner (live, running in-quadrant) */}
             <div ref={gamePanelRef} className="group relative overflow-hidden bg-[#16213e]">
               <iframe
                 ref={gameFrameRef}
-                src="/ghost-runner/index.html"
+                src={gameSrc}
                 title="Ghost Runner Game"
                 allow="camera; fullscreen"
                 allowFullScreen
+                onLoad={() => {
+                  // Unmute only. Auto-starting here painted the tower start screen
+                  // for one frame before the game took over, which read as a flicker;
+                  // the guest taps once to start, which is Raiyat's own entry point.
+                  if (document.fullscreenElement !== gamePanelRef.current) return;
+                  gameFrameRef.current?.contentWindow?.postMessage(
+                    { type: "ghost-runner:unmute" },
+                    window.location.origin,
+                  );
+                }}
                 className="absolute inset-0 h-full w-full border-0"
               />
               {isGameFullscreen && (
                 <button
                   type="button"
                   onClick={leaveGameForHome}
-                  className="absolute bottom-6 right-6 z-20 inline-flex h-16 items-center gap-3 rounded-[8px] border-2 border-white bg-[var(--gc-orange)] px-7 text-xl font-black text-white shadow-[0_2px_8px_rgba(0,0,0,0.28)] transition-colors hover:bg-[#b94300] active:bg-[#963700]"
+                  className="absolute bottom-6 right-6 z-20 inline-flex h-24 items-center gap-4 rounded-[12px] border-2 border-white bg-[var(--gc-orange)] px-10 text-2xl font-black text-white shadow-[0_4px_12px_rgba(0,0,0,0.35)] transition-colors hover:bg-[#b94300] active:bg-[#963700]"
                 >
-                  <Home size={26} strokeWidth={2.5} />
+                  <Home size={34} strokeWidth={2.5} />
                   Home
                 </button>
               )}
+              {/* The attract build paints its own dimmed START GAME button, so this
+                  is a transparent catcher: it shows that button through, but keeps
+                  taps off the iframe (which would start the old game in the tile
+                  instead of going fullscreen). */}
               {!isGameFullscreen && (
                 <button
                   type="button"
                   onClick={toggleGameFullscreen}
-                  aria-label="Open game full screen"
-                  title="Full screen"
-                  className="absolute right-4 top-4 z-20 grid h-11 w-11 place-items-center rounded-[8px] border border-white/30 bg-black/70 text-white hover:bg-black/85"
-                >
-                  <Maximize2 size={21} />
-                </button>
+                  aria-label="Play Ghost Runner full screen"
+                  className="absolute inset-0 z-20 h-full w-full cursor-pointer bg-transparent"
+                />
               )}
             </div>
 
@@ -324,51 +386,11 @@ export function BoothApp() {
           </section>
         )}
 
-        {/* Chloe's cardify1 splash. The gold cards + "CARDIFY BOOTH" wordmark are
-            baked into home-bg.png, so START is positioned below the artwork's
-            centred title and the logos sit bottom-left, per her storyboard. */}
-        {step === "cardIntro" && (
-          <section
-            className="relative h-full w-full bg-[#F5A623] bg-cover bg-center"
-            style={{ backgroundImage: "url('/cardify/home-bg.png')" }}
-          >
-            <button
-              type="button"
-              onClick={() => setStep("choose")}
-              className="absolute left-6 top-6 z-20 rounded-[30px] border border-black/25 bg-white/30 px-5 py-2.5 text-sm font-bold text-[#222] backdrop-blur-[4px] transition-all hover:bg-white/50 active:scale-95"
-            >
-              ← Back
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStep("cardSetup")}
-              aria-label="Start making your trading card"
-              className="absolute left-1/2 top-[60%] z-20 -translate-x-1/2 rounded-full transition-transform hover:scale-105 active:scale-95"
-              style={{ animation: "cardifyPulseRing 1.8s infinite" }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/cardify/start-btn.png" alt="Start" className="h-auto w-[340px] drop-shadow-[0_10px_24px_rgba(0,0,0,0.35)]" />
-            </button>
-
-            <div className="absolute bottom-7 left-9 z-20 flex items-center gap-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/cardify/icl-logo.png" alt="ICL" className="h-11 w-auto object-contain" />
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/cardify/glogo.png" alt="Gettysburg College" className="h-11 w-auto object-contain" />
-            </div>
-          </section>
-        )}
-
         {step === "collage" && (
-          <section className="min-h-0 w-full flex-1 pb-4">
-            <div className="overflow-hidden h-full rounded-[8px] border border-[var(--gc-black)]/14 bg-[#ffffff] shadow-lg">
-              <PhotoCollage
-                onExit={() => setStep("choose")}
-                onActivity={() => setActivityNonce((n) => n + 1)}
-              />
-            </div>
-          </section>
+          <PhotoCollage
+            onExit={() => setStep("choose")}
+            onActivity={() => setActivityNonce((n) => n + 1)}
+          />
         )}
 
         {/* Chloe's cardify2: the photo panel sits left, the white field bars sit
@@ -501,6 +523,36 @@ export function BoothApp() {
           />
         )}
       </div>
+
+      {/* Kiosk idle popup — appears after 2 min of inactivity, auto-resets in 30s */}
+      {showIdlePopup && (
+        <div
+          className="fixed inset-0 z-[9999] grid place-items-center bg-black/60 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Session timeout"
+          // Tapping anywhere on the overlay counts as activity and dismisses the popup
+          onClick={() => setShowIdlePopup(false)}
+        >
+          <div
+            className="flex flex-col items-center gap-6 rounded-[16px] border-2 border-white/30 bg-[var(--gc-orange)] px-12 py-10 shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="text-[48px]">👋</span>
+            <h2 className="text-3xl font-black text-white">Still there?</h2>
+            <p className="max-w-[320px] text-center text-lg font-semibold text-white/90">
+              Tap continue to keep your session going.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowIdlePopup(false)}
+              className="mt-2 rounded-full border-2 border-white bg-white px-10 py-4 text-xl font-black uppercase tracking-wide text-[var(--gc-orange)] shadow-lg transition-transform hover:scale-105 active:scale-95"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

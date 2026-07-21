@@ -15,7 +15,7 @@ let pulseValue = 0;
 const ctx = canvas.getContext("2d");
 
 // ground line position
-let groundY = canvas.height - 150;
+const groundY = canvas.height - 150;
 
 // target display size for the ghost (logical hitbox size)
 const GHOST_W = 120;
@@ -36,6 +36,34 @@ let obstacles = [];
 let gameSpeed = 5;
 let score = 0;
 
+let currentLevel = 1;
+let transitioning = false;
+let transitionTimer = 0;
+let lvl2GraceTimer = 0;
+
+const startMusic = new Audio("Assets/start_sound.wav");
+startMusic.loop = true;
+startMusic.volume = 0.2;
+startMusic.muted = true;
+
+const hitSound = new Audio("Assets/Obstacle_hitting_sound.mp3");
+hitSound.volume = 1.0;
+hitSound.muted = true;
+
+const jumpSound = new Audio("Assets/jump.wav");
+jumpSound.muted = true;
+
+let audioUnlocked = false;
+
+const score20Sound = new Audio("Assets/Score_20.mp3");
+score20Sound.muted = true;
+
+const lvl2BgSound = new Audio("Assets/lvl2_bgsound.wav");
+lvl2BgSound.loop = true;
+lvl2BgSound.volume = 0.2;
+lvl2BgSound.muted = true;
+let score20Played = false;
+
 // background video for start screen
 const bgVideo = document.createElement("video");
 bgVideo.src = "Assets/background animation 1.mp4";
@@ -43,21 +71,27 @@ bgVideo.loop = true;
 bgVideo.muted = true;
 bgVideo.playsInline = true;
 bgVideo.load();
-bgVideo.addEventListener("ended", () => { bgVideo.currentTime = 0; bgVideo.play(); });
+bgVideo.addEventListener("ended", function() { bgVideo.currentTime = 0; bgVideo.play(); });
 
 // background video for gameplay
 const gameBgVideo = document.createElement("video");
+const lvl2BgVideo = document.createElement("video");
+
+lvl2BgVideo.src = "Assets/background_lvl2.mp4";
+lvl2BgVideo.loop = true;
+lvl2BgVideo.muted = true;
+lvl2BgVideo.playsInline = true;
+lvl2BgVideo.load();
 gameBgVideo.src = "Assets/game_background.mp4";
 gameBgVideo.loop = true;
 gameBgVideo.muted = true;
 gameBgVideo.playsInline = true;
 gameBgVideo.load();
-gameBgVideo.addEventListener("ended", () => { gameBgVideo.currentTime = 0; gameBgVideo.play(); });
+gameBgVideo.addEventListener("ended", function() { gameBgVideo.currentTime = 0; gameBgVideo.play(); });
 
 // gifData stores: { frames: [{cropped canvas}], delays, currentFrame, lastTime }
 const gifData = {};
 
-// find tight bounding box of non-transparent pixels in imageData
 function getBounds(data, w, h) {
   let minX = w, maxX = 0, minY = h, maxY = 0;
   for (let y = 0; y < h; y++) {
@@ -71,46 +105,37 @@ function getBounds(data, w, h) {
       }
     }
   }
-  if (minX > maxX) return null; // blank frame
+  if (minX > maxX) return null;
   return { minX, maxX, minY, maxY };
 }
 
 function loadGif(name, src) {
-  return new Promise((resolve, reject) => {
+  return new Promise(function(resolve, reject) {
     fetch(src)
-      .then(r => r.arrayBuffer())
-      .then(buffer => {
+      .then(function(r) { return r.arrayBuffer(); })
+      .then(function(buffer) {
         const reader = new GifReader(new Uint8Array(buffer));
         const fw = reader.width;
         const fh = reader.height;
         const frames = [];
-
         for (let i = 0; i < reader.numFrames(); i++) {
           const info = reader.frameInfo(i);
           const imgData = new ImageData(fw, fh);
           reader.decodeAndBlitFrameRGBA(i, imgData.data);
-
-          // find tight crop of this frame
           const bounds = getBounds(imgData.data, fw, fh);
           if (!bounds) continue;
-
           const cw = bounds.maxX - bounds.minX + 1;
           const ch = bounds.maxY - bounds.minY + 1;
-
-          // draw cropped region onto a small canvas
           const fc = document.createElement("canvas");
           fc.width = cw;
           fc.height = ch;
           const fctx = fc.getContext("2d");
-          // put full frame, then crop by drawing offset
           const tmp = document.createElement("canvas");
           tmp.width = fw; tmp.height = fh;
           tmp.getContext("2d").putImageData(imgData, 0, 0);
           fctx.drawImage(tmp, bounds.minX, bounds.minY, cw, ch, 0, 0, cw, ch);
-
           frames.push({ canvas: fc, delay: (info.delay || 10) * 10 });
         }
-
         gifData[name] = { frames, currentFrame: 0, lastTime: 0 };
         resolve();
       })
@@ -143,153 +168,299 @@ async function loadAssets() {
     loadGif("randomghost", "Assets/random ghost gif.gif"),
     loadGif("bunny",       "Assets/bunny ani gif.gif"),
     loadGif("squirrel",    "Assets/squirl gift .gif"),
+    loadGif("lvl2enemy",   "Assets/lvl2_enemy.gif"),
+    loadGif("lvl2enemy2",  "Assets/lvl2_enemy2.gif"),
   ]);
 }
 
 function spawnObstacle() {
   const types = ["enemy", "randomghost", "bunny", "squirrel"];
   const type = types[Math.floor(Math.random() * types.length)];
-  const h = Math.floor(Math.random() * 30) + 100; // 100–130px
-  const w = Math.floor(Math.random() * 30) + 100; // 100–130px
+  const h = Math.floor(Math.random() * 30) + 100;
+  const w = Math.floor(Math.random() * 30) + 100;
   obstacles.push({
     x: canvas.width,
-    y: groundY - h,   // bottom sits on ground line
+    y: groundY - h,
     width: w,
     height: h,
-    imageType: type
+    imageType: type,
+    scored: false,
+    dodged: false,
+    direction: "right"
   });
 }
 
-function autoJump() {
-  if (ghost.jumping) return;
-  // Find closest upcoming obstacle
-  const upcoming = obstacles.find(o => o.x + o.width > ghost.x);
-  if (upcoming) {
-    // Jump slightly before it
-    if (upcoming.x - (ghost.x + ghost.width) < 180) {
-      jump(jumpForce, true);
+// BUG FIX 1: spawnObstacleLvl2 was always setting y: -h regardless of direction
+// Now x and y are correctly set based on direction
+// BUG FIX 4: left/right obstacles were spawning only near the top of the screen
+// because the "-150" buffer was subtracted from the whole random range instead
+// of being used as a small floor offset. Now obstacles use the full vertical
+// space above the ground line, with a small 20px buffer so they never spawn
+// touching the ground line itself.
+function spawnObstacleLvl2() {
+  const types = ["lvl2enemy", "lvl2enemy2", "enemy", "randomghost", "bunny", "squirrel"];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const w = 120;
+  const h = 120;
+  const directionPick = Math.floor(Math.random() * 3);
+  let direction = "";
+  let x = 0;
+  let y = 0;
+  if (directionPick === 0) {
+    direction = "top";
+    x = Math.floor(Math.random() * (canvas.width - w));
+    y = -h;
+  } else if (directionPick === 1) {
+    direction = "left";
+    x = -w;
+    y = groundY - h;
+    for (let i = 0; i < obstacles.length; i++) {
+      if (obstacles[i].direction === "left" && obstacles[i].x < 150) {
+        return;
+      }
     }
+  } else {
+    direction = "right";
+    x = canvas.width;
+    y = groundY - h;
+    for (let i = 0; i < obstacles.length; i++) {
+      if (obstacles[i].direction === "right" && obstacles[i].x > canvas.width - 150) {
+        return;
+      }
+    }
+  }
+  obstacles.push({
+    x: x,
+    y: y,
+    width: w,
+    height: h,
+    imageType: type,
+    direction: direction,
+    scored: false,
+    dodged: false,
+    minDistance: Infinity
+  });
+}
+
+function reportActivity() {
+  if (window.parent && window.parent.postMessage) {
+    window.parent.postMessage({ type: "ghost-runner:activity" }, window.location.origin);
   }
 }
 
 function jump(force, isAuto = false) {
-  const f = force || jumpForce;
+  if (!isAuto && !audioUnlocked) {
+    audioUnlocked = true;
+    hitSound.play().then(function() { hitSound.pause(); }).catch(function() {});
+    jumpSound.play().then(function() { jumpSound.pause(); }).catch(function() {});
+    score20Sound.play().then(function() { score20Sound.pause(); }).catch(function() {});
+    lvl2BgSound.play().then(function() { lvl2BgSound.pause(); }).catch(function() {});
+  }
+  
   if (showingLeaderBoard) { if(!isAuto){ showingLeaderBoard = false; resetGame(); } return; }
   if (enteringName) return;
-  if (!gameStarted) { 
-    if(!isAuto) {
-      gameStarted = true; resetGame(); return; 
-    }
-  }
+
   if (gameOver) {
-    if(!isAuto) {
-      if (checkTopFive()) { enteringName = true; }
-      else { showingLeaderBoard = true; leaderboardAnimationProgress = 0; }
+    if(!isAuto) resetGame();
+    return;
+  }
+  
+  if (!gameStarted) {
+    if(!isAuto){
+      gameStarted = true;
+      score = 0;
+      obstacles = [];
+      spawnObstacle();
+      bgVideo.pause();
+      gameBgVideo.play();
+      startMusic.play().catch(function(e){});
     }
-    return;
   }
-  if (!ghost.jumping) { ghost.velocityY = f; ghost.jumping = true; }
+  
+  let f = force || jumpForce;
+  if (!ghost.jumping) {
+      if(!isAuto) reportActivity();
+      ghost.velocityY = f;
+      ghost.jumping = true;
+    }
 }
 
-function reportActivity() {
-  window.parent.postMessage({ type: "ghost-runner:activity" }, window.location.origin);
-}
+document.addEventListener("keydown", function(e) { if (e.code === "Space") { reportActivity(); jump(); } });
 
-document.addEventListener("keydown", e => {
-  reportActivity();
-  if (e.code === "Space") jump();
-});
-canvas.addEventListener("touchstart", () => {
-  reportActivity();
-  jump();
-});
-canvas.addEventListener("mousedown", () => {
-  reportActivity();
-  jump();
-});
-
-window.addEventListener("message", event => {
-  if (
-    event.origin !== window.location.origin ||
-    event.data?.type !== "ghost-runner:reset"
-  ) {
-    return;
+window.addEventListener("message", e => {
+  if (e.data && e.data.type === "ghost-runner:reset") {
+    resetGame();
+  } else if (e.data && e.data.type === "ghost-runner:unmute") {
+    audioUnlocked = true; // assume unlocked by user tap in BoothApp
+    startMusic.muted = false;
+    lvl2BgSound.muted = false;
+    hitSound.muted = false;
+    jumpSound.muted = false;
+    score20Sound.muted = false;
+  } else if (e.data && e.data.type === "ghost-runner:mute") {
+    startMusic.muted = true;
+    lvl2BgSound.muted = true;
+    hitSound.muted = true;
+    jumpSound.muted = true;
+    score20Sound.muted = true;
   }
-
-  gameStarted = false;
-  enteringName = false;
-  showingLeaderBoard = false;
-  leaderboardAnimationProgress = 0;
-  nameInput.value = "";
-  nameInput.style.display = "none";
-  resetGame();
 });
 
-// ── Hand Gesture Control ──────────────────────────────────────────────
-let handY = null;        // last known hand y (0–1, top=0)
-let prevHandY = null;    // previous frame hand y
+// DEBUG: press "2" to jump straight into Level 2 for testing.
+// Remove this block once Level 2 testing is done.
+document.addEventListener("keydown", function(e) {
+  if (e.key === "2" && !enteringName) {
+    gameStarted = true;
+    gameOver = false;
+    enteringName = false;
+    showingLeaderBoard = false;
+    transitioning = false;
+    transitionTimer = 0;
+    currentLevel = 2;
+    score20Played = true;
+    obstacles = [];
+    score = 0;
+    gameSpeed = 5;
+    lvl2GraceTimer = 90;
+    handXHistory = [];
+    ghost.x = canvas.width / 2 - ghost.width / 2;
+    ghost.y = groundY - ghost.height;
+    ghost.velocityY = 0;
+    ghost.jumping = false;
+    bgVideo.pause();
+    gameBgVideo.pause();
+    startMusic.pause();
+    startMusic.currentTime = 0;
+    score20Sound.pause();
+    score20Sound.currentTime = 0;
+    lvl2BgVideo.currentTime = 0;
+    lvl2BgVideo.play();
+    lvl2BgSound.currentTime = 0;
+    lvl2BgSound.play();
+  }
+});
+canvas.addEventListener("touchstart", function() { reportActivity(); jump(); });
+canvas.addEventListener("mousedown", function() { reportActivity(); jump(); });
 
-// set up webcam + MediaPipe Hands
+let handY = null;
+let handX = null;
+let prevHandY = null;
+let handXHistory = [];
+const HAND_X_HISTORY_SIZE = 5;
+let framesSinceHandSeen = 0;
+
 const webcamVideo = document.createElement("video");
-webcamVideo.width = 320; webcamVideo.height = 240;
+webcamVideo.width = 640; webcamVideo.height = 480;
 webcamVideo.autoplay = true; webcamVideo.playsInline = true;
 
-// load MediaPipe Hands
-const handsModel = new Hands({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`
-});
-handsModel.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
-handsModel.onResults(results => {
-  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    const wrist = results.multiHandLandmarks[0][0];
-    prevHandY = handY;
-    handY = wrist.y;
-
-    if (prevHandY !== null) {
-      const dy = prevHandY - handY;
-      if (dy > 0.03 && gameStarted && !gameOver && !ghost.jumping) {
-        const force = -(14 + Math.min(dy * 80, 4));
-        reportActivity();
-        jump(force);
-      }
-    }
-  }
-});
-
-let cameraActive = false;
 let gameStream = null;
+let cameraActive = false;
+let fallbackCameraAttempts = 0;
 
 function acquireCamera() {
   if (cameraActive) return;
-  
-  navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } }).then(stream => {
+
+  if (window.parent && window.parent.__boothCamera && window.parent.__boothCamera.stream) {
+    gameStream = window.parent.__boothCamera.stream;
+    webcamVideo.srcObject = gameStream;
+    webcamVideo.play().catch(function(e) {});
+    cameraActive = true;
+    console.log("Using shared booth camera");
+    return;
+  }
+
+  fallbackCameraAttempts++;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.warn("navigator.mediaDevices.getUserMedia is not supported (likely HTTP). Camera disabled.");
+    return;
+  }
+
+  // Loose constraints on purpose: laptop webcams reject exact sizes with
+  // OverconstrainedError, which reads as a dead camera.
+  navigator.mediaDevices.getUserMedia({ video: true }).then(function(stream) {
     gameStream = stream;
     webcamVideo.srcObject = stream;
-    webcamVideo.play();
+    webcamVideo.play().catch(function(e) {});
     cameraActive = true;
-    console.log("Game camera acquired");
-    requestAnimationFrame(processVideoFrame);
-  }).catch(e => {
-    console.warn("Camera busy, retrying in 2s:", e.message);
-    setTimeout(acquireCamera, 2000);
+    console.log("Game fallback camera acquired");
+  }).catch(function(e) {
+    console.warn("Camera unavailable (" + e.name + "): " + e.message);
+    if (fallbackCameraAttempts < 10) {
+      setTimeout(acquireCamera, 2000);
+    }
   });
 }
 
-window.addEventListener('unload', () => {
-  if (gameStream) {
-    gameStream.getTracks().forEach(track => track.stop());
+window.addEventListener('unload', function() {
+  if (gameStream && (!window.parent || !window.parent.__boothCamera || gameStream !== window.parent.__boothCamera.stream)) {
+    gameStream.getTracks().forEach(function(track) { track.stop(); });
   }
 });
 
-async function processVideoFrame() {
-  if (!cameraActive) return;
-  if (webcamVideo.readyState >= 2) {
-    await handsModel.send({ image: webcamVideo });
-  }
-  requestAnimationFrame(processVideoFrame);
-}
-
 acquireCamera();
+
+const handsModel = new window.Hands({
+  locateFile: function(f) { return "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/" + f; }
+});
+handsModel.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+handsModel.onResults(function(results) {
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    framesSinceHandSeen = 0;
+    const wrist = results.multiHandLandmarks[0][0];
+    const palmBase = results.multiHandLandmarks[0][9];
+    const rawHandX = (wrist.x + palmBase.x) / 2;
+    const rawHandY = (wrist.y + palmBase.y) / 2;
+
+    // moving average over recent readings actually cancels out noise
+    // (rate-limiting alone only caps speed, it doesn't stop shaking)
+    handXHistory.push(rawHandX);
+    if (handXHistory.length > HAND_X_HISTORY_SIZE) {
+      handXHistory.shift();
+    }
+    let sumX = 0;
+    for (let i = 0; i < handXHistory.length; i++) {
+      sumX += handXHistory[i];
+    }
+    handX = sumX / handXHistory.length;
+
+    // light smoothing on Y so single noisy frames don't falsely register as a jump gesture
+    prevHandY = handY;
+    if (handY === null) {
+      handY = rawHandY;
+    } else {
+      handY = handY + (rawHandY - handY) * 0.4;
+    }
+
+    if (prevHandY !== null) {
+      const dy = prevHandY - handY;
+      if (dy > 0.03 && gameStarted && !gameOver && !ghost.jumping && !transitioning) {
+        reportActivity();
+        jump(jumpForce);
+      }
+    }
+  } else {
+    framesSinceHandSeen++;
+    if (framesSinceHandSeen > 25) {
+      handXHistory = [];
+      handX = null;
+      handY = null;
+      prevHandY = null;
+    }
+  }
+});
+
+const handsCamera = new Camera(webcamVideo, {
+  onFrame: async function() {
+    if (webcamVideo.readyState >= 2) {
+      try {
+        await handsModel.send({ image: webcamVideo });
+      } catch(e) {}
+    }
+  },
+  width: 640, height: 480
+});
+handsCamera.start().catch(function(e) { console.warn("MediaPipe camera error:", e); });
 
 nameInput.addEventListener("keydown", function(e) {
   if (e.key === "Enter") {
@@ -303,11 +474,9 @@ nameInput.addEventListener("keydown", function(e) {
   }
 });
 
-// draw a GIF character cropped tightly, sitting exactly on groundY
 function drawSprite(name, x, y, w, h) {
   const frame = getGifFrame(name);
   if (frame) {
-    // frame is already tightly cropped — draw it scaled to w×h, bottom at y+h
     ctx.drawImage(frame, x, y, w, h);
   } else {
     ctx.fillStyle = "#ffffff";
@@ -329,19 +498,19 @@ function drawGround() {
 }
 
 function drawObstacles() {
-  for (let o of obstacles) {
+  for (let i = 0; i < obstacles.length; i++) {
+    let o = obstacles[i];
     drawSprite(o.imageType, o.x, o.y, o.width, o.height);
   }
 }
 
 function collision() {
   if (!gameStarted || gameOver || enteringName || showingLeaderBoard) return;
-  // use 60% of width (centered) and 80% of height (from bottom) as hitbox
+  if (lvl2GraceTimer > 0) return;
   const gx = ghost.x + ghost.width * 0.2;
   const gy = ghost.y + ghost.height * 0.2;
   const gw = ghost.width * 0.6;
   const gh = ghost.height * 0.8;
-
   for (let obs of obstacles) {
     const ox = obs.x + obs.width * 0.2;
     const oy = obs.y + obs.height * 0.2;
@@ -349,11 +518,23 @@ function collision() {
     const oh = obs.height * 0.8;
     if (gx < ox + ow && gx + gw > ox && gy < oy + oh && gy + gh > oy) {
       gameOver = true;
+      hitSound.currentTime = 0;
+      hitSound.play();
     }
   }
 }
 
 function updateGhost() {
+  if (currentLevel === 2) {
+    if (handX !== null) {
+      const targetX = (1 - handX) * canvas.width - ghost.width / 2;
+      if (Math.abs(targetX - ghost.x) > 2) {
+        ghost.x = targetX;
+      }
+    }
+    if (ghost.x < 0) { ghost.x = 0; }
+    if (ghost.x + ghost.width > canvas.width) { ghost.x = canvas.width - ghost.width; }
+  }
   ghost.velocityY += gravity;
   ghost.y += ghost.velocityY;
   if (ghost.y >= groundY - ghost.height) {
@@ -364,13 +545,92 @@ function updateGhost() {
 }
 
 function updateObstacles() {
-  for (let o of obstacles) o.x -= gameSpeed;
-  if (obstacles.length > 0 && obstacles[0].x + obstacles[0].width < 0) {
-    obstacles.shift();
-    score++;
+  if (currentLevel === 1) {
+    for (let i = 0; i < obstacles.length; i++) {
+      obstacles[i].x -= gameSpeed;
+    }
+    for (let i = 0; i < obstacles.length; i++) {
+      if (!obstacles[i].scored && ghost.x > obstacles[i].x + obstacles[i].width) {
+        obstacles[i].scored = true;
+        jumpSound.currentTime = 0;
+        jumpSound.play();
+      }
+    }
+    if (obstacles.length > 0 && obstacles[0].x + obstacles[0].width < 0) {
+      obstacles.shift();
+      score++;
+      if (score >= 20 && !score20Played) {
+        score20Played = true;
+        transitioning = true;
+        transitionTimer = 600;
+        startMusic.pause();
+        startMusic.currentTime = 0;
+        score20Sound.play();
+      }
+    }
+    const last = obstacles[obstacles.length - 1];
+    if (obstacles.length === 0 || last.x < canvas.width - 550) {
+      spawnObstacle();
+    }
+  } else {
+    // move obstacles based on direction
+    for (let i = 0; i < obstacles.length; i++) {
+      if (obstacles[i].direction === "top") {
+        obstacles[i].y += gameSpeed;
+      } else if (obstacles[i].direction === "left") {
+        obstacles[i].x += gameSpeed;
+      } else if (obstacles[i].direction === "right") {
+        obstacles[i].x -= gameSpeed;
+      }
+    }
+
+    // track how close each obstacle came to the ghost, for the close-call bonus
+    for (let i = 0; i < obstacles.length; i++) {
+      let o = obstacles[i];
+      if (o.dodged) continue;
+      const ghostCenterX = ghost.x + ghost.width / 2;
+      const ghostCenterY = ghost.y + ghost.height / 2;
+      const obsCenterX = o.x + o.width / 2;
+      const obsCenterY = o.y + o.height / 2;
+      const dx = Math.abs(ghostCenterX - obsCenterX);
+      const dy = Math.abs(ghostCenterY - obsCenterY);
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < o.minDistance) {
+        o.minDistance = distance;
+      }
+    }
+
+    // BUG FIX 3: removal condition for "right" was wrong (o.x > o.width < 0 is nonsense)
+    // scoring now happens here: if an obstacle safely leaves the screen without a
+    // collision, it counts as dodged and awards points - no longer gated on being
+    // close to the ghost at the exact instant it finished passing, since dodging by
+    // moving away is just as valid as dodging by staying close.
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      let o = obstacles[i];
+      let offScreen = false;
+      if (o.direction === "top" && o.y > canvas.height + 50) {
+        offScreen = true;
+      } else if (o.direction === "left" && o.x > canvas.width + 50) {
+        offScreen = true;
+      } else if (o.direction === "right" && o.x + o.width < -50) {
+        offScreen = true;
+      }
+      if (offScreen) {
+        if (!o.dodged && !gameOver) {
+          o.dodged = true;
+          if (o.minDistance < 50) { score += 3; } else { score += 1; }
+          jumpSound.currentTime = 0;
+          jumpSound.play();
+        }
+        obstacles.splice(i, 1);
+      }
+    }
+
+    // keep 3 obstacles on screen
+    if (obstacles.length < 2) {
+      spawnObstacleLvl2();
+    }
   }
-  const last = obstacles[obstacles.length - 1];
-  if (obstacles.length === 0 || last.x < canvas.width - 550) spawnObstacle();
 }
 
 function updateScore() {
@@ -397,6 +657,23 @@ function drawGameOver() {
   ctx.textAlign = "left";
 }
 
+function drawTransition() {
+  ctx.fillStyle = "rgba(0,0,0,0.85)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 56px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("Congratulations!", canvas.width / 2, canvas.height / 2 - 80);
+  ctx.font = "36px Arial";
+  ctx.fillText("Get Ready for Level 2!", canvas.width / 2, canvas.height / 2 - 20);
+  let secondsLeft = Math.ceil(transitionTimer / 60);
+  ctx.font = "bold 80px Arial";
+  ctx.fillText(secondsLeft, canvas.width / 2, canvas.height / 2 + 80);
+  ctx.font = "24px Arial";
+  ctx.fillText("seconds remaining", canvas.width / 2, canvas.height / 2 + 130);
+  ctx.textAlign = "left";
+}
+
 function drawleaderBoard() {
   ctx.fillStyle = "#0a0a1a";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -410,11 +687,11 @@ function drawleaderBoard() {
     let alpha = Math.min(1, ep / 20);
     ctx.fillStyle = "rgba(255,255,255,0.1)";
     ctx.fillRect(canvas.width / 2 - 350, 150 + i * 90, 700, 70);
-    ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+    ctx.fillStyle = "rgba(255,215,0," + alpha + ")";
     ctx.font = "bold 32px Arial";
     ctx.textAlign = "left";
     ctx.fillText((i + 1) + ".", canvas.width / 2 - 320, 197 + i * 90);
-    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
     ctx.font = "32px Arial";
     ctx.fillText(leaderBoard[i].name, canvas.width / 2 - 270, 197 + i * 90);
     ctx.textAlign = "right";
@@ -422,7 +699,7 @@ function drawleaderBoard() {
   }
   let ba = Math.min(1, (leaderboardAnimationProgress - 100) / 20);
   if (ba > 0) {
-    ctx.fillStyle = `rgba(255,255,255,${ba})`;
+    ctx.fillStyle = "rgba(255,255,255," + ba + ")";
     ctx.font = "24px Arial";
     ctx.textAlign = "center";
     ctx.fillText("Press Space or Tap to Play Again", canvas.width / 2, canvas.height - 60);
@@ -441,41 +718,49 @@ function drawNameInput() {
   ctx.font = "28px Arial";
   ctx.fillText("Enter your name and press Enter:", canvas.width / 2, canvas.height / 2 - 40);
   ctx.textAlign = "left";
-  if (nameInput.style.display !== "block") {
-    nameInput.style.display = "block";
-    nameInput.focus();
-  }
+  nameInput.style.display = "block";
+  nameInput.style.left = (canvas.offsetLeft + canvas.width / 2 - 150) + "px";
+  nameInput.style.top = (canvas.offsetTop + canvas.height / 2) + "px";
+  nameInput.style.width = "300px";
+  nameInput.focus();
 }
 
+
 function drawStartScreen() {
-  // dark overlay to dim the auto-playing game
-  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  if (bgVideo.readyState >= 2) {
+    if (bgVideo.paused) bgVideo.play();
+    ctx.drawImage(bgVideo, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "#16213e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // START GAME button
-  ctx.fillStyle = "rgba(224, 86, 26, 0.9)"; // Matches Booth orange
-  let bw = 320; let bh = 80;
-  let bx = canvas.width / 2 - bw / 2;
-  let by = canvas.height / 2 - bh / 2;
-  ctx.beginPath();
-  ctx.roundRect(bx, by, bw, bh, 20);
-  ctx.fill();
-  
+  let floatOffset = Math.sin(pulseValue) * 15;
   ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 32px Arial";
+  ctx.font = "bold 80px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("START GAME", canvas.width / 2, canvas.height / 2 + 10);
-
-  // pulsing prompt
+  ctx.fillText("Ghost Runner", canvas.width / 2, canvas.height / 2 - 60 + floatOffset);
   pulseValue += 0.05;
   let alpha = (Math.sin(pulseValue) + 1) / 2;
-  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-  ctx.font = "24px Arial";
-  ctx.fillText("Press Space or Tap screen to Play", canvas.width / 2, canvas.height / 2 + 80);
+  ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
+  ctx.font = "28px Arial";
+  ctx.fillText("Press Space/Tap to Start", canvas.width / 2, canvas.height / 2 + 20);
   ctx.textAlign = "left";
 }
 
 function resetGame() {
+  showingLeaderBoard = false;
+  leaderboardAnimationProgress = 0;
+  enteringName = false;
+  gameStarted = false;
+  score20Played = false;
+  currentLevel = 1;
+  transitioning = false;
+  transitionTimer = 0;
+  lvl2GraceTimer = 0;
+  handXHistory = [];
+  ghost.x = 100;
   ghost.y = groundY - ghost.height;
   ghost.velocityY = 0;
   ghost.jumping = false;
@@ -483,6 +768,15 @@ function resetGame() {
   score = 0;
   gameSpeed = 5;
   gameOver = false;
+  lvl2BgSound.pause();
+  lvl2BgSound.currentTime = 0;
+  lvl2BgVideo.pause();
+  lvl2BgVideo.currentTime = 0;
+  gameBgVideo.pause();
+  gameBgVideo.currentTime = 0;
+  startMusic.play().catch(function(e) {});
+  bgVideo.currentTime = 0;
+  bgVideo.play().catch(function(e) {});
   spawnObstacle();
 }
 
@@ -492,18 +786,10 @@ function checkTopFive() {
 
 function saveScore(name) {
   leaderBoard.push({ name, score });
-  leaderBoard.sort((a, b) => b.score - a.score);
+  leaderBoard.sort(function(a, b) { return b.score - a.score; });
   if (leaderBoard.length > 5) leaderBoard = leaderBoard.slice(0, 5);
-  
-  // Persist to API
-  fetch('/api/leaderboard', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(leaderBoard)
-  }).catch(console.error);
 }
 
-// draw the game background video, falling back to dark fill
 function drawGameBackground() {
   if (gameBgVideo.readyState >= 2) {
     if (gameBgVideo.paused) gameBgVideo.play();
@@ -514,35 +800,72 @@ function drawGameBackground() {
   }
 }
 
+function drawLvl2Background() {
+  if (lvl2BgVideo.readyState >= 2) {
+    if (lvl2BgVideo.paused) lvl2BgVideo.play();
+    ctx.drawImage(lvl2BgVideo, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "#0a0a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
 function gameLoop(timestamp) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   updateGifs(timestamp);
-  
-  if (enteringName) {
+  if (!gameStarted) {
+    drawStartScreen();
+    drawGround();
+  } else if (transitioning) {
+    drawGameBackground();
+    drawTransition();
+    transitionTimer--;
+    if (transitionTimer <= 0) {
+      transitioning = false;
+      currentLevel = 2;
+      lvl2GraceTimer = 90;
+      handXHistory = [];
+      score20Sound.pause();
+      score20Sound.currentTime = 0;
+      lvl2BgSound.play();
+      lvl2BgVideo.play();
+      obstacles = [];
+      score = 0;
+    }
+  } else if (enteringName) {
     drawGameBackground();
     drawGround(); drawGhost(); drawObstacles(); drawScore(); drawNameInput();
   } else if (showingLeaderBoard) {
     drawleaderBoard();
   } else if (gameOver) {
-    drawGameBackground();
+    // Match the gameplay branch below: the freeze-frame keeps the level you died
+    // on, otherwise Level 2 enemies sit frozen over the Level 1 background.
+    if (currentLevel === 1) {
+      drawGameBackground();
+    } else {
+      drawLvl2Background();
+    }
     drawGround(); drawGhost(); drawObstacles(); drawScore(); drawGameOver();
-  } else if (!gameStarted) {
-    // Attract Mode
-    autoJump();
-    drawGameBackground();
-    updateGhost(); updateObstacles();
-    drawGround(); drawGhost(); drawObstacles();
-    drawStartScreen();
   } else {
-    // Normal Gameplay
-    drawGameBackground();
-    updateGhost(); updateObstacles(); updateScore(); collision();
-    drawGround(); drawGhost(); drawObstacles(); drawScore();
+    if (currentLevel === 1) {
+      drawGameBackground();
+    } else {
+      drawLvl2Background();
+    }
+    updateGhost();
+    updateObstacles();
+    updateScore();
+    if (lvl2GraceTimer > 0) { lvl2GraceTimer--; }
+    collision();
+    drawGround();
+    drawGhost();
+    drawObstacles();
+    drawScore();
   }
   requestAnimationFrame(gameLoop);
 }
 
-loadAssets().then(() => {
+loadAssets().then(function() {
   spawnObstacle();
   gameLoop();
 });

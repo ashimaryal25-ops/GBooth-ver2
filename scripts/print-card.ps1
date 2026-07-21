@@ -139,87 +139,22 @@ try {
       $bounds = $eventArgs.PageBounds
       $eventArgs.Graphics.DrawImage($image, $bounds)
     } elseif ($Mode -eq "DoubleStrip4x6") {
+      # The frontend has already composed the full 1200x1800 sheet.
+      # Use a cover scale (Math::Max) to fill the driver's page bounds
+      # without non-uniform stretching or white edges, ignoring any
+      # legacy center gutter or rotation logic.
       $bounds = $eventArgs.PageBounds
-      $isLandscape = $eventArgs.PageSettings.Landscape -or ($bounds.Width -gt $bounds.Height)
-
-      if ($isLandscape) {
-        # Landscape 6x4: Top half and bottom half strips
-        $halfHeight = $bounds.Height / 2
-        
-        $rotatedImage = $image.Clone()
-        $rotatedImage.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone)
-
-        try {
-          $topTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $bounds.Width, $halfHeight
-          $bottomTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $halfHeight + $VerticalOffset), $bounds.Width, $halfHeight
-
-          # Fill top half (cover), clipped to the half, so the strip bleeds to
-          # every edge with no white paper and the centre cut stays symmetric.
-          $scale1 = [Math]::Max($topTarget.Width / $rotatedImage.Width, $topTarget.Height / $rotatedImage.Height)
-          $w1 = $rotatedImage.Width * $scale1
-          $h1 = $rotatedImage.Height * $scale1
-          $x1 = $topTarget.X + (($topTarget.Width - $w1) / 2)
-          $y1 = $topTarget.Y + (($topTarget.Height - $h1) / 2)
-          $eventArgs.Graphics.SetClip($topTarget)
-          $eventArgs.Graphics.DrawImage($rotatedImage, $x1, $y1, $w1, $h1)
-          $eventArgs.Graphics.ResetClip()
-
-          # Fill bottom half (cover), clipped to the half.
-          $scale2 = [Math]::Max($bottomTarget.Width / $rotatedImage.Width, $bottomTarget.Height / $rotatedImage.Height)
-          $w2 = $rotatedImage.Width * $scale2
-          $h2 = $rotatedImage.Height * $scale2
-          $x2 = $bottomTarget.X + (($bottomTarget.Width - $w2) / 2)
-          $y2 = $bottomTarget.Y + (($bottomTarget.Height - $h2) / 2)
-          $eventArgs.Graphics.SetClip($bottomTarget)
-          $eventArgs.Graphics.DrawImage($rotatedImage, $x2, $y2, $w2, $h2)
-          $eventArgs.Graphics.ResetClip()
-        } finally {
-          $rotatedImage.Dispose()
-        }
-      } else {
-        # Portrait 4x6 cut vertically down the centre into two 2x6 strips.
-        $halfWidth = $bounds.Width / 2
-        $imageAspect = $image.Width / $image.Height
-        $halfAspect = $halfWidth / $bounds.Height  # ~0.333 for 4x6
-
-        if ($imageAspect -gt ($halfAspect * 1.5)) {
-          # The image is already composed with two strips at ~4:6 ratio
-          # (the client handled gutter math). Just fill the whole page.
-          $scale = [Math]::Max($bounds.Width / $image.Width, $bounds.Height / $image.Height)
-          $w = $image.Width * $scale
-          $h = $image.Height * $scale
-          $x = $bounds.X + (($bounds.Width - $w) / 2) + $HorizontalOffset
-          $y = $bounds.Y + (($bounds.Height - $h) / 2) + $VerticalOffset
-          $eventArgs.Graphics.SetClip($bounds)
-          $eventArgs.Graphics.DrawImage($image, $x, $y, $w, $h)
-          $eventArgs.Graphics.ResetClip()
-        } else {
-          # Single strip — duplicate into left and right halves, filled (cover)
-          # and clipped so neither bleeds into the other.
-          $leftTarget = New-Object System.Drawing.RectangleF ($bounds.X + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
-          $rightTarget = New-Object System.Drawing.RectangleF ($bounds.X + $halfWidth + $HorizontalOffset), ($bounds.Y + $VerticalOffset), $halfWidth, $bounds.Height
-
-          # Fill left half (cover), clipped to the half.
-          $scale1 = [Math]::Max($leftTarget.Width / $image.Width, $leftTarget.Height / $image.Height)
-          $w1 = $image.Width * $scale1
-          $h1 = $image.Height * $scale1
-          $x1 = $leftTarget.X + (($leftTarget.Width - $w1) / 2)
-          $y1 = $leftTarget.Y + (($leftTarget.Height - $h1) / 2)
-          $eventArgs.Graphics.SetClip($leftTarget)
-          $eventArgs.Graphics.DrawImage($image, $x1, $y1, $w1, $h1)
-          $eventArgs.Graphics.ResetClip()
-
-          # Fill right half (cover), clipped to the half.
-          $scale2 = [Math]::Max($rightTarget.Width / $image.Width, $rightTarget.Height / $image.Height)
-          $w2 = $image.Width * $scale2
-          $h2 = $image.Height * $scale2
-          $x2 = $rightTarget.X + (($rightTarget.Width - $w2) / 2)
-          $y2 = $rightTarget.Y + (($rightTarget.Height - $h2) / 2)
-          $eventArgs.Graphics.SetClip($rightTarget)
-          $eventArgs.Graphics.DrawImage($image, $x2, $y2, $w2, $h2)
-          $eventArgs.Graphics.ResetClip()
-        }
-      }
+      Write-Host "PAGE BOUNDS DIAGNOSTICS: Width=$($bounds.Width), Height=$($bounds.Height), X=$($bounds.X), Y=$($bounds.Y), Landscape=$($eventArgs.PageSettings.Landscape)"
+      
+      $scale = [Math]::Max($bounds.Width / $image.Width, $bounds.Height / $image.Height)
+      $w = $image.Width * $scale
+      $h = $image.Height * $scale
+      $x = $bounds.X + (($bounds.Width - $w) / 2)
+      $y = $bounds.Y + (($bounds.Height - $h) / 2)
+      
+      $eventArgs.Graphics.SetClip($bounds)
+      $eventArgs.Graphics.DrawImage($image, $x, $y, $w, $h)
+      $eventArgs.Graphics.ResetClip()
     } elseif ($Mode -eq "Fill4x6") {
       # Fill the whole 4x6 page. The card renderer is slightly narrower than
       # 4x6, so "fit" creates white bars on the left and right. "Fill" uses a

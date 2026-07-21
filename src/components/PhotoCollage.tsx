@@ -11,23 +11,22 @@
  *   - 3s countdown capture + retake, mirrored viewfinder
  *   - strip canvas (360x960) with her exact per-slot spacing maths
  *   - her 6 filters, 5 preset frame colours + colour wheel, 8 emoji stickers
- *   - final screen: QR + strip + print, 30s auto-reset
+ *   - final screen: strip + print
  *
  * Deliberate differences from her standalone file, and why:
  *   - Her "home" view is dropped: the app's Photo Collage tile is already the
  *     entry point, so her second home screen would be a duplicate.
  *   - Her UI chrome was 17 PNGs (buttons/headings/background) that were never
  *     committed, so they are rebuilt in CSS using her palette and typography.
- *   - The printed strip carries the ICL mark. A separate final-screen QR points
- *     to a temporary public PNG so guests can download it on their phones.
+ *   - The printed strip carries the ICL mark (QR to the ICL website baked in).
  *   - Printing posts the strip PNG to /api/collage/print (silent DS-RX1 print,
  *     DoubleStrip4x6 = two strips per 4x6) instead of window.print().
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Home, Printer } from "lucide-react";
 import QRCode from "qrcode";
-import { uploadPublicPng } from "@/lib/public-download";
-import { PhoneDownloadSteps } from "@/components/PhoneDownloadSteps";
+import { captureDevPhoto, isDevCamera } from "@/lib/dev-camera";
 
 type CollageView = "layout" | "camera" | "decor" | "final";
 type FilterName = "none" | "traditional" | "sepia" | "soft" | "y2k" | "vivid";
@@ -46,9 +45,30 @@ type PhotoCollageProps = {
 };
 
 // Chloe's strip geometry.
-const STRIP_W = 360;
-const STRIP_H = 960;
+const STRIP_W = 600;
+const STRIP_H = 1800;
 const STRIP_PADDING_X = 24;
+
+// Reframing for the low-mounted booth camera, which captures a lot of empty
+// ceiling above the guest. Tune these two if the framing needs adjusting:
+const CROP_ZOOM = 1.2; // >1 zooms in to push the ceiling out of frame
+const VERTICAL_CROP_BIAS = 0.72; // 0 keeps the top of the frame, 1 keeps the bottom
+
+// Shared layout band so 2/3/4-shot strips are laid out identically: photos
+// always fill the same region (top margin → footer) with equal gaps, and the
+// footer sits in a fixed reserved band at the bottom. No per-layout tuning.
+const STRIP_TOP_MARGIN = 24;
+const STRIP_GAP = 20;
+const STRIP_FOOTER_H = 250; // reserved bottom band for college text + QR + logo
+
+// Photo width is constant; height follows from how many photos share the band.
+// The strip renderer AND the camera preview both call this, so the shape a guest
+// frames on the capture screen is exactly the shape that lands on the strip.
+const STRIP_PHOTO_W = STRIP_W - STRIP_PADDING_X * 2;
+function slotPhotoHeight(slotCount: number): number {
+  const contentH = STRIP_H - STRIP_TOP_MARGIN - STRIP_FOOTER_H;
+  return slotCount > 0 ? (contentH - (slotCount - 1) * STRIP_GAP) / slotCount : contentH;
+}
 
 // Her palette.
 const PRESET_COLORS = ["#043371", "#CC4E00", "#EB9AB2", "#CDED76", "#AEA43A"];
@@ -106,22 +126,23 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
   const [retakeNonce, setRetakeNonce] = useState(0);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  const [qrDataUrl, setQrDataUrl] = useState("");
-  const [downloadState, setDownloadState] = useState<
-    "idle" | "uploading" | "ready" | "error"
-  >("idle");
-  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [stripDataUrl, setStripDataUrl] = useState("");
   const [printState, setPrintState] = useState<"idle" | "printing" | "sent">("idle");
   const [printError, setPrintError] = useState<string | null>(null);
-  const [secondsRemaining, setSecondsRemaining] = useState(30);
+
   const [paletteDrag, setPaletteDrag] = useState<PaletteDrag | null>(null);
   const [brandReady, setBrandReady] = useState(false);
   const [stripQrReady, setStripQrReady] = useState(false);
 
   const lastRelayIdRef = useRef(0);
+  const activePointersRef = useRef<Map<number, {x: number, y: number}>>(new Map());
+  const pinchRef = useRef<{ id: number; startDist: number; startSize: number } | null>(null);
   const captureResolversRef = useRef(new Map<string, (photo: string | null) => void>());
   const photosRef = useRef<HTMLCanvasElement[]>([]);
+  // Incremented on every capture-session run so a stale/overlapping async loop
+  // (StrictMode re-invoke, or re-entering the camera from Decorate) can detect
+  // that a newer run has taken over and stop appending photos.
+  const captureRunRef = useRef(0);
   const decorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const brandImgRef = useRef<HTMLImageElement | null>(null);
   const stripQrImgRef = useRef<HTMLImageElement | null>(null);
@@ -135,12 +156,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     onActivityRef.current = onActivity;
   }, [onActivity]);
 
-  // Same reason: keeps the final 30s countdown from restarting whenever the
-  // parent re-renders and hands us a fresh onExit closure.
-  const onExitRef = useRef(onExit);
-  useEffect(() => {
-    onExitRef.current = onExit;
-  }, [onExit]);
+
 
   // The ICL mark is local, so drawing it cannot taint the printable canvas.
   useEffect(() => {
@@ -182,6 +198,13 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
   }, [sendToMirror]);
 
   const requestMirrorPhoto = useCallback(() => new Promise<string | null>((resolve) => {
+    // Laptop testing: capture straight from the shared stream instead of asking
+    // the mirror window, which isn't running.
+    if (isDevCamera()) {
+      resolve(captureDevPhoto());
+      return;
+    }
+
     const requestId = crypto.randomUUID();
     const timeout = window.setTimeout(() => {
       captureResolversRef.current.delete(requestId);
@@ -252,26 +275,38 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
   useEffect(() => {
     if (view !== "camera") return;
     let cancelled = false;
+    const runId = ++captureRunRef.current;
+
+    // Start every camera visit from a clean slate: re-entering the camera (e.g.
+    // Back from Decorate) must not append onto a previous session's photos, and
+    // a stale async loop must stop the moment a newer run takes over.
+    photosRef.current = [];
+    setPreviews([]);
+    setSessionDone(false);
+    setCameraError(null);
+
+    // True once this run has been superseded or torn down — the guard against
+    // two countdown loops both pushing photos.
+    const isStale = () => cancelled || runId !== captureRunRef.current;
 
     (async () => {
-      setCameraError(null);
       sendToMirror({ type: "mirror-start" });
       sendToMirror({ type: "mirror-ping" });
       await sleep(500);
 
       for (let i = 0; i < slots; i++) {
         for (let t = 3; t > 0; t--) {
-          if (cancelled) return;
+          if (isStale()) return;
           setCountdown(t);
           sendToMirror({ type: "countdown", value: t });
           await sleep(1000);
         }
-        if (cancelled) return;
+        if (isStale()) return;
         setCountdown(null);
         sendToMirror({ type: "countdown", value: 0 });
 
         const photo = await requestMirrorPhoto();
-        if (cancelled) return;
+        if (isStale()) return;
         if (!photo) {
           setCameraError("Please check the camera screen and try again.");
           return;
@@ -283,8 +318,10 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
           image.onload = () => resolve();
           image.onerror = () => resolve();
         });
+        if (isStale()) return;
 
-        if (image.naturalWidth > 0) {
+        // Cap at the chosen slot count so a rogue loop can never overshoot.
+        if (image.naturalWidth > 0 && photosRef.current.length < slots) {
           const c = document.createElement("canvas");
           c.width = 640;
           c.height = 480;
@@ -303,7 +340,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
         }
         if (i < slots - 1) await sleep(1200);
       }
-      if (!cancelled) setSessionDone(true);
+      if (!isStale()) setSessionDone(true);
     })();
 
     return () => {
@@ -325,50 +362,36 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
     const photos = photosRef.current;
     const slotCount = photos.length;
-    const photoW = STRIP_W - STRIP_PADDING_X * 2;
 
-    let photoH = photoW * 0.75;
-    let topOffsetMargin = 24;
-    let gapSpacingValue = 16;
-
-    if (slotCount === 2) {
-      photoH = photoW * 0.78;
-      topOffsetMargin = 70;
-      gapSpacingValue = 50;
-    } else if (slotCount === 3) {
-      photoH = photoW * 0.78;
-      topOffsetMargin = 40;
-      gapSpacingValue = 22;
-    } else if (slotCount === 4) {
-      photoH = photoW * 0.62;
-      topOffsetMargin = 16;
-      gapSpacingValue = 10;
-    }
+    // Fill one fixed content band with N equal photos + equal gaps (shared with
+    // the camera preview via slotPhotoHeight), so 2/3/4-shot strips look
+    // consistent and match what the guest framed — no dead space at the bottom.
+    const photoW = STRIP_PHOTO_W;
+    const photoH = slotPhotoHeight(slotCount);
 
     for (let i = 0; i < slotCount; i++) {
-      const y = topOffsetMargin + i * (photoH + gapSpacingValue);
+      const y = STRIP_TOP_MARGIN + i * (photoH + STRIP_GAP);
 
-      // Never stretch the photo into the slot: the 4-shot slot is wider than the
-      // 4:3 source, so a plain fit would squash faces vertically. Instead crop
-      // the source to the slot's aspect ("cover") using native pixels — no
-      // distortion, no resolution loss. Horizontal crop is centred; vertical
-      // crop keeps the TOP of the frame so heads never get sliced off.
+      // Cover-crop the source into the slot with no distortion (never stretch),
+      // then reframe for the low booth camera, which captures a lot of empty
+      // ceiling above the guest:
+      //   - start from the largest source region matching the slot aspect,
+      //   - zoom in slightly (CROP_ZOOM) to push ceiling out of frame,
+      //   - centre the crop horizontally,
+      //   - bias the vertical crop DOWNWARD (VERTICAL_CROP_BIAS) so the face and
+      //     torso are kept and the ceiling is what gets trimmed.
       const src = photos[i];
       const targetAspect = photoW / photoH;
-      const srcAspect = src.width / src.height;
-      let sx = 0;
-      let sy = 0;
       let sw = src.width;
-      let sh = src.height;
-      if (srcAspect > targetAspect) {
-        // Source is wider than the slot — trim the sides, keep full height.
+      let sh = src.width / targetAspect;
+      if (sh > src.height) {
+        sh = src.height;
         sw = src.height * targetAspect;
-        sx = (src.width - sw) / 2;
-      } else {
-        // Source is taller than the slot — trim the bottom, keep the top.
-        sh = src.width / targetAspect;
-        sy = 0;
       }
+      sw /= CROP_ZOOM;
+      sh /= CROP_ZOOM;
+      const sx = (src.width - sw) / 2;
+      const sy = (src.height - sh) * VERTICAL_CROP_BIAS;
 
       ctx.save();
       // Clip so filters never bleed past the photo frame.
@@ -385,25 +408,25 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
     // Footer branding.
     ctx.fillStyle = "#ffffff";
-    ctx.font = "900 16px sans-serif";
+    ctx.font = "900 30px sans-serif";
     ctx.textAlign = "center";
     (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "2px";
-    ctx.fillText("GETTYSBURG COLLEGE", STRIP_W / 2, STRIP_H - 110);
+    ctx.fillText("GETTYSBURG COLLEGE", STRIP_W / 2, STRIP_H - 206);
     (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "0px";
 
     const brandImg = brandReady ? brandImgRef.current : null;
     if (brandImg) {
-      const brandSize = 62;
+      const brandSize = 116;
       const brandX = STRIP_W - STRIP_PADDING_X - brandSize;
-      const brandY = STRIP_H - 82;
+      const brandY = STRIP_H - 154;
       ctx.drawImage(brandImg, brandX, brandY, brandSize, brandSize);
     }
 
     const stripQrImg = stripQrReady ? stripQrImgRef.current : null;
     if (stripQrImg) {
-      const qrSize = 62;
+      const qrSize = 116;
       const qrX = STRIP_PADDING_X;
-      const qrY = STRIP_H - 82;
+      const qrY = STRIP_H - 154;
       ctx.drawImage(stripQrImg, qrX, qrY, qrSize, qrSize);
     }
 
@@ -432,27 +455,53 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const p = canvasCoords(e);
-    for (let i = stickers.length - 1; i >= 0; i--) {
-      const s = stickers[i];
-      if (Math.hypot(p.x - s.x, p.y - s.y) < s.size / 1.2) {
-        dragRef.current = { id: s.id, dx: p.x - s.x, dy: p.y - s.y };
-        e.currentTarget.setPointerCapture(e.pointerId);
-        return;
+    activePointersRef.current.set(e.pointerId, p);
+
+    if (activePointersRef.current.size === 1) {
+      for (let i = stickers.length - 1; i >= 0; i--) {
+        const s = stickers[i];
+        if (Math.hypot(p.x - s.x, p.y - s.y) < s.size / 1.2) {
+          dragRef.current = { id: s.id, dx: p.x - s.x, dy: p.y - s.y };
+          e.currentTarget.setPointerCapture(e.pointerId);
+          break;
+        }
+      }
+    } else if (activePointersRef.current.size === 2 && dragRef.current) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const activeSticker = stickers.find((s) => s.id === dragRef.current!.id);
+      if (activeSticker) {
+        pinchRef.current = { id: activeSticker.id, startDist: dist, startSize: activeSticker.size };
       }
     }
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
     const p = canvasCoords(e);
-    setStickers((prev) =>
-      prev.map((s) => (s.id === drag.id ? { ...s, x: p.x - drag.dx, y: p.y - drag.dy } : s)),
-    );
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, p);
+    }
+
+    if (activePointersRef.current.size === 2 && pinchRef.current) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const newSize = Math.max(20, Math.min(600, pinchRef.current.startSize * (dist / pinchRef.current.startDist)));
+      setStickers((prev) =>
+        prev.map((s) => (s.id === pinchRef.current!.id ? { ...s, size: newSize } : s)),
+      );
+    } else if (activePointersRef.current.size === 1 && dragRef.current) {
+      setStickers((prev) =>
+        prev.map((s) => (s.id === dragRef.current!.id ? { ...s, x: p.x - dragRef.current!.dx, y: p.y - dragRef.current!.dy } : s)),
+      );
+    }
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (dragRef.current) {
+    activePointersRef.current.delete(e.pointerId);
+    if (activePointersRef.current.size < 2) {
+      pinchRef.current = null;
+    }
+    if (activePointersRef.current.size === 0 && dragRef.current) {
       e.currentTarget.releasePointerCapture(e.pointerId);
       dragRef.current = null;
     }
@@ -499,7 +548,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
 
     if (!droppedOnStrip) return;
 
-    const size = 45;
+    const size = 84;
     const x = ((e.clientX - box.left) / box.width) * STRIP_W;
     const y = ((e.clientY - box.top) / box.height) * STRIP_H;
     setStickers((previous) => [
@@ -514,58 +563,16 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     ]);
   };
 
-  // --- Final screen: 30s auto-reset ----------------------------------------
-  // (secondsRemaining is primed in goFinal, not here, to avoid a sync setState
-  //  inside the effect body.)
-  useEffect(() => {
-    if (view !== "final") return;
-    const id = setInterval(() => {
-      setSecondsRemaining((s) => {
-        if (s <= 1) {
-          clearInterval(id);
-          onExitRef.current();
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [view]);
 
-  const goFinal = async () => {
+
+  const goFinal = () => {
     const canvas = decorCanvasRef.current;
     if (!canvas) return;
 
     const imageDataUrl = canvas.toDataURL("image/png");
     setStripDataUrl(imageDataUrl);
-    setQrDataUrl("");
-    setDownloadError(null);
-    setDownloadState("uploading");
     stopCamera();
-    setSecondsRemaining(30);
     setView("final");
-
-    try {
-      const publicFile = await uploadPublicPng({
-        kind: "collage",
-        id: crypto.randomUUID(),
-        imageDataUrl,
-      });
-      const qr = await QRCode.toDataURL(publicFile.downloadUrl, {
-        margin: 2,
-        width: 320,
-        color: { dark: "#111111", light: "#ffffff" },
-      });
-      setQrDataUrl(qr);
-      setDownloadState("ready");
-    } catch (error) {
-      setDownloadState("error");
-      setDownloadError(
-        error instanceof Error
-          ? error.message
-          : "Phone download is unavailable.",
-      );
-    }
   };
 
   /**
@@ -583,18 +590,8 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     if (!stripCanvas) return null;
 
     // 4:6 portrait sheet, height matches the strip so no vertical scaling.
-    const sheetH = STRIP_H;                           // 960
-    const sheetW = Math.round(sheetH * (4 / 6));      // 640
-
-    const G = 24; // center gutter in canvas pixels
-    const outerMargin = G / 2;
-    const stripSlotW = (sheetW - 2 * G) / 2;          // 296
-
-    // Fit the strip into its slot (preserve aspect ratio).
-    const scale = Math.min(stripSlotW / STRIP_W, sheetH / STRIP_H);
-    const drawW = STRIP_W * scale;
-    const drawH = STRIP_H * scale;
-    const yOff = (sheetH - drawH) / 2;
+    const sheetH = 1800;
+    const sheetW = 1200;
 
     const sheet = document.createElement("canvas");
     sheet.width = sheetW;
@@ -608,12 +605,10 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
     ctx.fillRect(0, 0, sheetW, sheetH);
 
     // Left strip
-    const leftX = outerMargin + (stripSlotW - drawW) / 2;
-    ctx.drawImage(stripCanvas, leftX, yOff, drawW, drawH);
+    ctx.drawImage(stripCanvas, 0, 0, 600, 1800);
 
     // Right strip (identical)
-    const rightX = outerMargin + stripSlotW + G + (stripSlotW - drawW) / 2;
-    ctx.drawImage(stripCanvas, rightX, yOff, drawW, drawH);
+    ctx.drawImage(stripCanvas, 600, 0, 600, 1800);
 
     return sheet.toDataURL("image/png");
   }, [bgColor]);
@@ -737,9 +732,24 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
             ← Back
           </button>
 
+          {(() => {
+            const viewfinderRatio = STRIP_PHOTO_W / slotPhotoHeight(slots);
+            // Same height for both columns so the row never sizes itself off
+            // whichever one happens to be taller (the tall 2-shot thumbnails
+            // used to do this, leaving the sidebar flush at the top instead of
+            // centered like the viewfinder).
+            const columnHeight =
+              viewfinderRatio >= 1 ? `${560 / viewfinderRatio}px` : "min(78vh, 680px)";
+            return (
           <div className="flex w-full max-w-[1100px] items-center justify-center gap-[50px]">
             {/* Viewfinder */}
-            <div className="relative flex h-[590px] w-[520px] shrink-0 items-center justify-center overflow-hidden bg-black shadow-[0_10px_30px_rgba(0,0,0,0.4)]">
+            <div
+              className="relative flex shrink-0 items-center justify-center overflow-hidden bg-black shadow-[0_10px_30px_rgba(0,0,0,0.4)]"
+              style={{
+                aspectRatio: `${STRIP_PHOTO_W} / ${slotPhotoHeight(slots)}`,
+                height: columnHeight,
+              }}
+            >
               {previews.length > 0 ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -765,19 +775,25 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
             </div>
 
             {/* Sidebar previews + controls */}
-            <div className="flex w-[480px] flex-col items-center gap-[30px]">
+            <div
+              className="flex w-[480px] flex-col items-center justify-center gap-[30px]"
+              style={{ height: columnHeight }}
+            >
               <div
                 className="grid w-full gap-[15px]"
                 style={{
-                  gridTemplateColumns: slots === 2 ? "1fr" : "repeat(2, 1fr)",
-                  maxWidth: slots === 2 ? 240 : "100%",
-                  minHeight: 340,
+                  // Always two across, so the tall 2-shot thumbnails sit side by
+                  // side (one row) instead of stacking and pushing the Retake/
+                  // Continue buttons off the bottom.
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  maxWidth: "100%",
                 }}
               >
                 {Array.from({ length: slots }).map((_, i) => (
                   <div
                     key={i}
-                    className="flex aspect-[4/3] w-full items-center justify-center border border-white/50 bg-white/85 shadow-[0_4px_10px_rgba(0,0,0,0.15)]"
+                    className="flex w-full items-center justify-center border border-white/50 bg-white/85 shadow-[0_4px_10px_rgba(0,0,0,0.15)]"
+                    style={{ aspectRatio: `${STRIP_PHOTO_W} / ${slotPhotoHeight(slots)}` }}
                   >
                     {previews[i] ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -785,6 +801,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
                         src={previews[i]}
                         alt={`Shot ${i + 1}`}
                         className="h-[90%] w-[90%] -scale-x-100 object-cover"
+                        style={{ objectPosition: `center ${VERTICAL_CROP_BIAS * 100}%` }}
                       />
                     ) : (
                       <span className="text-3xl font-black text-[#cbd5e1]">{i + 1}</span>
@@ -816,6 +833,8 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
               </div>
             </div>
           </div>
+            );
+          })()}
         </section>
       )}
 
@@ -838,6 +857,8 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+                onPointerOut={onPointerUp}
                 className="max-h-[80vh] max-w-full cursor-crosshair bg-white shadow-[0_12px_35px_rgba(0,0,0,0.3)]"
                 style={{ touchAction: "none" }}
               />
@@ -939,7 +960,7 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
                     <button
                       type="button"
                       onClick={() => setStickers([])}
-                      className="mt-3 text-[11px] font-bold uppercase tracking-[0.5px] text-white/80 underline hover:text-white"
+                      className={`mt-4 ${glassBtn}`}
                     >
                       Clear stickers
                     </button>
@@ -990,29 +1011,24 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
             Here is your strip!
           </h2>
 
-          {/* Her black/green countdown box */}
-          <div className="absolute right-[4vw] top-[12vh] z-10 flex items-center gap-2.5 rounded-[10px] bg-black px-5 py-2 font-['Courier_New',monospace] text-[24px] font-bold text-[#2cff9f]">
-            TIME: <span>{secondsRemaining}</span>
-          </div>
+          {/* Home — top left, larger */}
+          <button
+            type="button"
+            onClick={() => {
+              stopCamera();
+              onExit();
+            }}
+            className="absolute left-6 top-6 z-10 flex h-[132px] w-[132px] flex-col items-center justify-center gap-1.5 rounded-full border-4 border-white text-[13px] font-black uppercase tracking-[1px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-transform hover:scale-105 active:scale-95"
+            style={{ background: "#043371" }}
+          >
+            <Home size={38} strokeWidth={2.2} />
+            Home
+          </button>
 
-          <div className="flex w-full flex-1 items-center justify-between px-[8vw]">
-            {/* LEFT: QR */}
-            <div className="flex w-[300px] flex-col items-center justify-center">
-              <h3 className="mb-3 text-center font-['Arial_Black',Arial,sans-serif] text-[20px] uppercase text-black">
-                Download your strip
-              </h3>
-              <div className="flex items-center justify-center bg-[#8bbceb] px-5 py-4 shadow-[0_10px_20px_rgba(0,0,0,0.15)]">
-                <PhoneDownloadSteps
-                  downloadQr={qrDataUrl || null}
-                  status={downloadState}
-                  errorMessage={downloadError}
-                  accent="#043371"
-                />
-              </div>
-            </div>
+          <div className="relative flex w-full flex-1 items-center justify-center px-[8vw]">
 
-            {/* CENTER: strip */}
-            <div className="flex flex-1 items-center justify-center">
+            {/* CENTER: strip (centered in the viewport) */}
+            <div className="flex items-center justify-center">
               {stripDataUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -1024,29 +1040,17 @@ export function PhotoCollage({ onExit, onActivity }: PhotoCollageProps) {
               )}
             </div>
 
-            {/* RIGHT: actions */}
-            <div className="flex w-[300px] flex-col items-end justify-center gap-8">
+            {/* RIGHT: print (floated so the strip stays centered) */}
+            <div className="absolute right-[8vw] top-1/2 flex -translate-y-1/2 flex-col items-center justify-center gap-8">
               <button
                 type="button"
                 onClick={handlePrint}
                 disabled={printState !== "idle"}
-                className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-1 rounded-full border-4 border-white text-[15px] font-black uppercase tracking-[1px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-transform hover:scale-105 active:scale-95 disabled:opacity-70"
+                className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-1.5 rounded-full border-4 border-white text-[15px] font-black uppercase tracking-[1px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-transform hover:scale-105 active:scale-95 disabled:opacity-70"
                 style={{ background: ACCENT }}
               >
-                <span className="text-[32px] leading-none">🖨️</span>
+                <Printer size={36} strokeWidth={2.2} />
                 {printState === "printing" ? "Printing…" : printState === "sent" ? "Sent!" : "Print"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  stopCamera();
-                  onExit();
-                }}
-                className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-1 rounded-full border-4 border-white bg-white/25 text-[14px] font-black uppercase tracking-[1px] text-white backdrop-blur-[5px] shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-transform hover:scale-105 active:scale-95"
-              >
-                <span className="text-[30px] leading-none">🏠</span>
-                Start Over
               </button>
             </div>
           </div>

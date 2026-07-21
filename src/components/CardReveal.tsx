@@ -1,14 +1,11 @@
 "use client";
 
-import { Download, Home, Printer, RotateCcw, Smartphone } from "lucide-react";
-import QRCode from "qrcode";
+import { Home, Printer, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CardPreview } from "@/components/CardPreview";
 import type { CardIdentity } from "@/lib/card-schema";
-import { downloadPng, makeCardFilename, renderCardAsPng } from "@/lib/export-card";
+import { renderCardAsPng } from "@/lib/export-card";
 import { printLocalCard } from "@/lib/print-local-card";
-import { uploadPublicPng } from "@/lib/public-download";
-import { PhoneDownloadSteps } from "@/components/PhoneDownloadSteps";
 import { saveLocalCardPrint } from "@/lib/save-local-card";
 
 interface CardRevealProps {
@@ -21,7 +18,6 @@ interface CardRevealProps {
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type PrintStatus = "idle" | "printing" | "printed" | "error";
-type DownloadStatus = "idle" | "uploading" | "ready" | "error";
 
 export function CardReveal({
   card,
@@ -33,16 +29,10 @@ export function CardReveal({
   const cardRef = useRef<HTMLDivElement>(null);
   const renderedPngRef = useRef<string | null>(null);
   const hasPreparedRef = useRef(false);
-  const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
   const [printError, setPrintError] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] =
-    useState<DownloadStatus>("idle");
-  const [downloadQr, setDownloadQr] = useState<string | null>(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const filename = makeCardFilename(card.displayName);
 
   useEffect(() => {
     if (!cardRef.current || hasPreparedRef.current) {
@@ -50,7 +40,6 @@ export function CardReveal({
     }
 
     setSaveStatus(cardId ? "saving" : "idle");
-    setDownloadStatus("uploading");
 
     const timer = window.setTimeout(async () => {
       if (hasPreparedRef.current || !cardRef.current) {
@@ -71,56 +60,14 @@ export function CardReveal({
             setSaveStatus("error");
           }
         }
-
-        try {
-          const publicFile = await uploadPublicPng({
-            kind: "card",
-            id: cardId ?? crypto.randomUUID(),
-            imageDataUrl,
-          });
-          const qrDataUrl = await QRCode.toDataURL(publicFile.downloadUrl, {
-            width: 320,
-            margin: 2,
-            color: { dark: "#111111", light: "#ffffff" },
-          });
-          setDownloadQr(qrDataUrl);
-          setDownloadStatus("ready");
-        } catch (error) {
-          setDownloadStatus("error");
-          setDownloadError(
-            error instanceof Error
-              ? error.message
-              : "Phone download is unavailable.",
-          );
-        }
       } catch {
         setSaveStatus("error");
-        setDownloadStatus("error");
-        setDownloadError("Could not render the finished card.");
+        setExportError(true);
       }
     }, 500);
 
     return () => window.clearTimeout(timer);
   }, [card, cardId]);
-
-  async function downloadCard() {
-    if (!cardRef.current) {
-      return;
-    }
-
-    setIsExporting(true);
-    setExportError(false);
-
-    try {
-      const dataUrl =
-        renderedPngRef.current ?? (await renderCardAsPng(cardRef.current));
-      downloadPng(dataUrl, filename);
-    } catch {
-      setExportError(true);
-    } finally {
-      setIsExporting(false);
-    }
-  }
 
   async function printCard() {
     if (!cardId || saveStatus !== "saved") {
@@ -146,84 +93,60 @@ export function CardReveal({
   }
 
   return (
-    <section className="mx-auto grid h-full w-full max-w-[1220px] content-center items-center gap-6 xl:grid-cols-[330px_250px_minmax(260px,1fr)]">
-      <div ref={cardRef} className="mx-auto">
+    <section className="relative mx-auto flex h-full w-full items-center justify-center gap-16">
+      {/* Home — top left, larger */}
+      <button
+        type="button"
+        onClick={onGoHome}
+        className="absolute left-6 top-6 z-10 flex h-[132px] w-[132px] flex-col items-center justify-center gap-1.5 rounded-full border-4 border-white text-[13px] font-black uppercase tracking-[1px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-transform hover:scale-105 active:scale-95"
+        style={{ background: "#043371" }}
+      >
+        <Home size={38} strokeWidth={2.2} />
+        Home
+      </button>
+
+      {/* Card */}
+      <div ref={cardRef} className="shrink-0">
         <CardPreview card={card} photo={photo} />
       </div>
 
-      <div className="flex min-h-[320px] flex-col items-center justify-center border-y border-black/20 px-5 text-center xl:border-x xl:border-y-0">
-        <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-[#043371] text-white">
-          <Smartphone size={21} aria-hidden="true" />
-        </div>
-        <h2 className="mb-3 text-xl font-black text-[#171717]">Get it on your phone</h2>
-
-        <PhoneDownloadSteps
-          downloadQr={downloadQr}
-          status={downloadStatus}
-          errorMessage={downloadError}
-          accent="#043371"
-        />
-      </div>
-
-      <div className="flex w-full flex-col items-center gap-5 xl:items-start">
+      {/* Actions — circular icon buttons matching the collage final screen */}
+      <div className="flex flex-col items-center gap-8">
         <div>
-          <p className="text-sm font-black uppercase tracking-[0.14em] text-[#b84900]">
+          <p className="text-sm font-black uppercase tracking-[0.14em] text-white/80">
             Finished
           </p>
-          <h2 className="mt-1 text-3xl font-black text-[#171717]">Your card is ready</h2>
+          <h2 className="mt-1 text-3xl font-black text-white [text-shadow:0_2px_6px_rgba(0,0,0,0.25)]">
+            Your card is ready
+          </h2>
         </div>
 
         <button
           type="button"
           onClick={printCard}
           disabled={saveStatus !== "saved" || printStatus === "printing"}
-          className="inline-flex h-16 w-full max-w-[300px] items-center justify-center gap-3 bg-[#cc4e00] px-7 text-lg font-black text-white shadow-[0_5px_0_#843200] transition-transform hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
+          className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-1.5 rounded-full border-4 border-white text-[15px] font-black uppercase tracking-[1px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-transform hover:scale-105 active:scale-95 disabled:opacity-70"
+          style={{ background: "#cc4e00" }}
         >
-          <Printer size={24} />
-          {printStatus === "printing" ? "Printing..." : "Print card"}
+          <Printer size={36} strokeWidth={2.2} />
+          {printStatus === "printing" ? "Printing…" : printStatus === "printed" ? "Sent!" : "Print"}
         </button>
 
-        <div className="grid w-full max-w-[300px] gap-2 sm:grid-cols-2 xl:grid-cols-1">
-          <button
-            type="button"
-            onClick={downloadCard}
-            disabled={isExporting}
-            className="inline-flex h-11 items-center justify-center gap-2 border border-black/20 bg-white px-4 text-sm font-bold text-[#171717] hover:border-[#043371]"
-          >
-            <Download size={17} />
-            {isExporting ? "Preparing..." : "Save on this device"}
-          </button>
-          <button
-            type="button"
-            onClick={onRestart}
-            className="inline-flex h-11 items-center justify-center gap-2 border border-black/20 bg-white px-4 text-sm font-bold text-[#171717] hover:border-[#043371]"
-          >
-            <RotateCcw size={17} />
-            New card
-          </button>
-          <button
-            type="button"
-            onClick={onGoHome}
-            className="inline-flex h-11 items-center justify-center gap-2 border border-black/20 bg-white px-4 text-sm font-bold text-[#171717] hover:border-[#043371] sm:col-span-2 xl:col-span-1"
-          >
-            <Home size={17} />
-            Home
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onRestart}
+          className="flex h-[132px] w-[132px] flex-col items-center justify-center gap-1.5 rounded-full border-4 border-white px-2 text-[13px] font-black uppercase tracking-[0.5px] text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-transform hover:scale-105 active:scale-95"
+          style={{ background: "#043371" }}
+        >
+          <RotateCcw size={32} strokeWidth={2.2} />
+          <span className="w-full text-center leading-[1.1]">New Card</span>
+        </button>
 
-        <p className="max-w-[320px] text-sm font-semibold text-[#5c3a10]" aria-live="polite">
-          {printStatus === "printed"
-            ? "Card sent to the kiosk printer."
-            : printStatus === "error"
-              ? (printError ?? "Could not send the card to the kiosk printer.")
-              : exportError
-                ? "PNG export failed. Try again in a moment."
-                : saveStatus === "saved"
-                  ? "Print file ready."
-                  : saveStatus === "error"
-                    ? "Local saving failed. Use Save on this device as a backup."
-                    : "Preparing the print file..."}
-        </p>
+        {(printStatus === "error" || exportError) && (
+          <p className="max-w-[280px] rounded-md bg-black/60 px-4 py-2 text-center text-sm font-bold text-[#ff9a9a]">
+            {printError ?? "Could not print. Try again."}
+          </p>
+        )}
       </div>
     </section>
   );
